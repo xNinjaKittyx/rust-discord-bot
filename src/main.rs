@@ -35,7 +35,7 @@ async fn event_handler(
             if new_message.mentions.contains(&**ctx.cache.current_user())
                 && new_message.author.id != ctx.cache.current_user().id
             {
-                let response = localai::get_gpt_response(new_message).await?;
+                let response = localai::get_gpt_response(new_message, &ctx).await?;
                 new_message
                     .reply(ctx, format!("{}", response.choices[0].message.content))
                     .await?;

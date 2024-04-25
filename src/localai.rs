@@ -64,10 +64,17 @@ pub struct ModelResponse {
     pub choices: Vec<ModelResponseChoice>,
 }
 
-pub async fn get_gpt_response(message: &serenity::Message) -> Result<ModelResponse, Error> {
+pub async fn get_gpt_response(
+    message: &serenity::Message,
+    ctx: &serenity::Context,
+) -> Result<ModelResponse, Error> {
     let mut map = ModelData::new();
     map.messages[1].role = "user".to_string();
-    map.messages[1].content = format!("{}", message.content);
+    map.messages[1].content = format!(
+        "{}",
+        message.content_safe(&ctx.cache).replace("@Rin#7236", "")
+    );
+    println!("GPT Sent {}", map.messages[1].content);
     let resp = HTTP_CLIENT
         .get_or_init(|| reqwest::Client::new())
         .post(format!("{}/v1/chat/completions", &*LOCALAI_URL))
@@ -77,7 +84,7 @@ pub async fn get_gpt_response(message: &serenity::Message) -> Result<ModelRespon
 
     let json_string = resp.text().await?;
 
-    println!("{}", json_string);
+    println!("GPT Response: {}", json_string);
 
     // Deserialize the JSON string into a Value
     let results: Result<ModelResponse, serde_json::Error> =
