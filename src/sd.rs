@@ -1,4 +1,5 @@
-use crate::{Context, Error, FOOTER_URL, HTTP_CLIENT, LOCALAI_URL, SERVE_STATIC_URL};
+use crate::env::{FOOTER_URL, LOCALAI_URL, SERVE_STATIC_URL};
+use crate::{Context, Error, HTTP_CLIENT};
 
 use poise::serenity_prelude as serenity;
 use serde::{Deserialize, Serialize};

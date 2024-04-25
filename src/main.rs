@@ -2,88 +2,21 @@
 
 mod anime;
 mod basic;
+mod env;
 mod kanji;
+mod localai;
 mod sd;
 mod sonarr;
 mod sonarr_serde;
 
-use std::sync::LazyLock;
 use std::sync::OnceLock;
 
 use poise::serenity_prelude as serenity;
-use serde::{Deserialize, Serialize};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 // User data, which is stored and accessible in all command invocations
 pub struct Data {}
-
-pub static FOOTER_URL: LazyLock<String> = LazyLock::new(|| std::env::var("FOOTER_URL").unwrap());
-
-pub static LOCALAI_URL: LazyLock<String> = LazyLock::new(|| std::env::var("LOCALAI_URL").unwrap());
-
-pub static SERVE_STATIC_URL: LazyLock<String> =
-    LazyLock::new(|| std::env::var("SERVE_STATIC_URL").unwrap());
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelMessageData {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelData {
-    pub model: String,
-    pub temperature: f32,
-    pub messages: Vec<ModelMessageData>,
-}
-
-impl Default for ModelMessageData {
-    fn default() -> Self {
-        ModelMessageData {
-            role: "system".to_string(),
-            content: "Given the following conversation, relevant context, and a follow up question, reply with an answer to the current question the user is asking. Return only your response to the question given the above information following the users instructions as needed.".to_string()
-        }
-    }
-}
-
-impl ModelData {
-    fn new() -> Self {
-        Default::default()
-    }
-}
-
-impl Default for ModelData {
-    fn default() -> Self {
-        ModelData {
-            model: "gpt-4".to_string(),
-            temperature: 0.7,
-            messages: vec![
-                ModelMessageData {
-                    ..Default::default()
-                },
-                ModelMessageData {
-                    ..Default::default()
-                },
-            ],
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelResponseMessage {
-    pub content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelResponseChoice {
-    pub message: ModelResponseMessage,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelResponse {
-    pub choices: Vec<ModelResponseChoice>,
-}
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -102,25 +35,7 @@ async fn event_handler(
             if new_message.mentions.contains(&**ctx.cache.current_user())
                 && new_message.author.id != ctx.cache.current_user().id
             {
-                let mut map = ModelData::new();
-                map.messages[1].role = "user".to_string();
-                map.messages[1].content = format!("{}", new_message.content);
-                let resp = HTTP_CLIENT
-                    .get_or_init(|| reqwest::Client::new())
-                    .post(format!("{}/v1/chat/completions", &*LOCALAI_URL))
-                    .json(&map)
-                    .send()
-                    .await?;
-
-                let json_string = resp.text().await?;
-
-                println!("{}", json_string);
-
-                // Deserialize the JSON string into a Value
-                let results: Result<ModelResponse, serde_json::Error> =
-                    serde_json::from_str(json_string.as_str());
-                let response = results.unwrap();
-
+                let response = localai::get_gpt_response(new_message).await?;
                 new_message
                     .reply(ctx, format!("{}", response.choices[0].message.content))
                     .await?;

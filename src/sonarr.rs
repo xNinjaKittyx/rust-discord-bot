@@ -1,17 +1,11 @@
+use crate::env::{FOOTER_URL, SONARR_API_KEY, SONARR_URL};
 use crate::sonarr_serde;
-use crate::{Context, Error, FOOTER_URL, HTTP_CLIENT};
-
-use std::sync::LazyLock;
+use crate::{Context, Error, HTTP_CLIENT};
 
 use chrono_tz::America::Los_Angeles;
 
 use poise::serenity_prelude as serenity;
 use reqwest;
-
-static SONARR_URL: LazyLock<String> = LazyLock::new(|| std::env::var("SONARR_URL").unwrap());
-
-static SONARR_API_KEY: LazyLock<String> =
-    LazyLock::new(|| std::env::var("SONARR_API_KEY").unwrap());
 
 async fn execute_sonarr_request(endpoint: &str) -> Result<String, reqwest::Error> {
     let resp = HTTP_CLIENT
