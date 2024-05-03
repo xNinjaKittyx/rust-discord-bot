@@ -74,9 +74,10 @@ pub async fn get_gpt_response(
         "{}",
         message.content_safe(&ctx.cache).replace("@Rin#7236", "")
     );
-    println!("GPT Sent {}", map.messages[1].content);
+    log::info!("GPT Sent {}", map.messages[1].content);
     let resp = HTTP_CLIENT
-        .get_or_init(|| reqwest::Client::new())
+        .get()
+        .unwrap()
         .post(format!("{}/v1/chat/completions", &*LOCALAI_URL))
         .json(&map)
         .send()
@@ -84,7 +85,7 @@ pub async fn get_gpt_response(
 
     let json_string = resp.text().await?;
 
-    println!("GPT Response: {}", json_string);
+    log::info!("GPT Response: {}", json_string);
 
     // Deserialize the JSON string into a Value
     let results: Result<ModelResponse, serde_json::Error> =

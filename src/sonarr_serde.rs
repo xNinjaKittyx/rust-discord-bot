@@ -19,12 +19,12 @@ pub struct Show {
     pub seasons: Vec<Season>,
     pub year: u16,
     pub path: String,
-    pub quality_profile_id: u8,
+    pub quality_profile_id: u16,
     pub season_folder: bool,
     pub monitored: bool,
     pub monitor_new_items: String,
     pub use_scene_numbering: bool,
-    pub runtime: u8,
+    pub runtime: u16,
     pub tvdb_id: u32,
     pub tv_rage_id: u32,
     pub tv_maze_id: u32,
@@ -41,7 +41,7 @@ pub struct Show {
     pub added: DateTime<Utc>,
     pub ratings: Ratings,
     pub statistics: Statistics,
-    pub language_profile_id: u8,
+    pub language_profile_id: u16,
     pub id: u32,
 }
 
@@ -64,14 +64,14 @@ pub struct Image {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Language {
-    pub id: u8,
+    pub id: u16,
     pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Season {
-    pub season_number: u8,
+    pub season_number: u16,
     pub monitored: bool,
     pub statistics: SeasonStatistics,
 }
@@ -99,7 +99,7 @@ pub struct Ratings {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Statistics {
-    pub season_count: u8,
+    pub season_count: u16,
     pub episode_file_count: u32,
     pub episode_count: u32,
     pub total_episode_count: u32,
@@ -117,7 +117,7 @@ pub struct History {
     pub languages: Vec<Language>,
     pub quality: Quality,
     pub custom_formats: Vec<CustomFormat>,
-    pub custom_format_score: u8,
+    pub custom_format_score: u16,
     pub quality_cutoff_not_met: bool,
     pub date: DateTime<Utc>,
     pub download_id: String,

@@ -24,7 +24,7 @@ struct SDPromptResponse {
 
 #[poise::command(prefix_command, slash_command)]
 pub async fn stablediffusion(ctx: Context<'_>, prompt: String) -> Result<(), Error> {
-    println!("Generating Stable Diffusion with {}", prompt);
+    log::info!("Generating Stable Diffusion with {}", prompt);
 
     let map = SDPrompt {
         prompt: prompt.to_string(),
@@ -34,7 +34,8 @@ pub async fn stablediffusion(ctx: Context<'_>, prompt: String) -> Result<(), Err
     };
 
     let resp = HTTP_CLIENT
-        .get_or_init(|| reqwest::Client::new())
+        .get()
+        .unwrap()
         .post(format!("{}/v1/images/generations", &*LOCALAI_URL))
         .header("Content-Type", "application/json")
         .json(&map)
@@ -42,7 +43,7 @@ pub async fn stablediffusion(ctx: Context<'_>, prompt: String) -> Result<(), Err
         .await?;
 
     let json_string = resp.text().await?;
-    println!("{}", json_string);
+    log::info!("{}", json_string);
     let results: Result<SDPromptResponse, serde_json::Error> =
         serde_json::from_str(json_string.as_str());
     let response = results.unwrap();
