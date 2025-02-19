@@ -1,5 +1,10 @@
+// https://github.com/ollama/ollama/blob/main/docs/api.md
+
+use std::collections::VecDeque;
+use std::sync::mpsc::channel;
+
 use crate::env::LOCALAI_URL;
-use crate::{Error, HTTP_CLIENT};
+use crate::{Error, AI_CONTEXT, HTTP_CLIENT, KV_DATABASE};
 
 use poise::serenity_prelude as serenity;
 use serde::{Deserialize, Serialize};
@@ -8,13 +13,6 @@ use serde::{Deserialize, Serialize};
 struct ModelMessageData {
     pub role: String,
     pub content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelData {
-    pub model: String,
-    pub temperature: f32,
-    pub messages: Vec<ModelMessageData>,
 }
 
 impl Default for ModelMessageData {
@@ -26,25 +24,47 @@ impl Default for ModelMessageData {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaOptions {
+    pub num_ctx: u64,
+    pub temperature: f64,
+    pub num_predict: u64,
+}
+
+impl Default for OllamaOptions {
+    fn default() -> Self {
+        OllamaOptions {
+            num_ctx: 8192,
+            temperature: 0.7,
+            num_predict: 250,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelMessageContext {
+    pub messages: Vec<ModelMessageData>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelData {
+    pub model: String,
+    pub messages: VecDeque<ModelMessageData>,
+    pub options: OllamaOptions,
+}
+
 impl ModelData {
     fn new() -> Self {
-        Default::default()
+        ModelData::default()
     }
 }
 
 impl Default for ModelData {
     fn default() -> Self {
         ModelData {
-            model: "gpt-4".to_string(),
-            temperature: 0.7,
-            messages: vec![
-                ModelMessageData {
-                    ..Default::default()
-                },
-                ModelMessageData {
-                    ..Default::default()
-                },
-            ],
+            model: "deepseek-r1:14b".to_string(),
+            messages: VecDeque::new(),
+            options: OllamaOptions::default(),
         }
     }
 }
@@ -64,17 +84,51 @@ pub struct ModelResponse {
     pub choices: Vec<ModelResponseChoice>,
 }
 
+pub async fn wipe_context(message: &serenity::Message) -> Result<(), Error> {
+    let db = KV_DATABASE.get().unwrap();
+    let tx = db.begin_write()?;
+    {
+        let mut tx_table = tx.open_table(AI_CONTEXT)?;
+        let channel_id: &str = &message.channel_id.to_string();
+        tx_table.remove(channel_id)?;
+    }
+    tx.commit()?;
+    log::info!("Context Cleared for {:?}", message.channel_id);
+
+    Ok(())
+}
+
 pub async fn get_gpt_response(
     message: &serenity::Message,
     ctx: &serenity::Context,
-) -> Result<ModelResponse, Error> {
+) -> Result<String, Error> {
+    let db = KV_DATABASE.get().unwrap();
+    let rx = db.begin_read()?;
+    let rx_table = rx.open_table(AI_CONTEXT)?;
+
     let mut map = ModelData::new();
-    map.messages[1].role = "user".to_string();
-    map.messages[1].content = format!(
-        "{}",
-        message.content_safe(&ctx.cache).replace("@Rin#7236", "")
-    );
-    log::info!("GPT Sent {}", map.messages[1].content);
+
+    let channel_id: &str = &message.channel_id.to_string();
+
+    if let Some(stored_value) = rx_table.get(channel_id)? {
+        let mut stored_messages: VecDeque<ModelMessageData> =
+            serde_json::from_str(stored_value.value())?;
+        map.messages.append(&mut stored_messages);
+    }
+
+    let new_msg = ModelMessageData {
+        role: "user".to_string(),
+        content: format!(
+            "{}",
+            message
+                .content_safe(&ctx.cache)
+                .replace("@Rin#7236", "")
+                .trim_start()
+        ),
+    };
+    map.messages.push_back(new_msg);
+
+    log::info!("GPT Sent {:#?}", map.messages);
     let resp = HTTP_CLIENT
         .get()
         .unwrap()
@@ -85,10 +139,40 @@ pub async fn get_gpt_response(
 
     let json_string = resp.text().await?;
 
-    log::info!("GPT Response: {}", json_string);
-
     // Deserialize the JSON string into a Value
     let results: Result<ModelResponse, serde_json::Error> =
         serde_json::from_str(json_string.as_str());
-    Ok(results.unwrap())
+
+    let model_response = results.unwrap();
+
+    log::info!("GPT Response: {:#?}", model_response);
+    // Deepseek has a think section, which should be removed
+    let bot_msg = ModelMessageData {
+        role: "assistant".to_string(),
+        content: model_response.choices[0].message.content.clone(),
+    };
+    map.messages.push_back(bot_msg);
+    log::info!("Length of Context: {}", map.messages.len());
+    while map.messages.len() >= 100 {
+        map.messages.pop_front();
+    }
+    let mut content = model_response.choices[0]
+        .message
+        .content
+        .trim_end_matches("<｜end▁of▁sentence｜>")
+        .split("</think>")
+        .last()
+        .unwrap()
+        .to_string();
+    content.truncate(2000);
+
+    let tx = db.begin_write()?;
+    {
+        let data = serde_json::to_string(&map.messages)?;
+        let mut table = tx.open_table(AI_CONTEXT)?;
+        let _ = table.insert(channel_id, data.as_str());
+    }
+    tx.commit()?;
+
+    Ok(content)
 }

@@ -15,8 +15,8 @@ mod tags;
 
 use std::sync::OnceLock;
 
+use miette::Result;
 use poise::serenity_prelude as serenity;
-
 use songbird::SerenityInit;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -28,6 +28,7 @@ static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static KV_DATABASE: OnceLock<redb::Database> = OnceLock::new();
 
 const TABLE: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("tags");
+const AI_CONTEXT: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("context");
 
 // Event Handler
 async fn event_handler(
@@ -44,16 +45,34 @@ async fn event_handler(
             if new_message.mentions.contains(&**ctx.cache.current_user())
                 && new_message.author.id != ctx.cache.current_user().id
             {
-                let response = localai::get_gpt_response(new_message, &ctx).await?;
-                new_message
-                    .reply(ctx, format!("{}", response.choices[0].message.content))
-                    .await?;
+                if new_message
+                    .content
+                    .to_lowercase()
+                    .contains("please wipe all context")
+                    && new_message.author.id == 82221891191844864
+                {
+                    localai::wipe_context(new_message).await?;
+                    new_message
+                        .reply(ctx, format!("Wiped all context."))
+                        .await?;
+                } else {
+                    let typing = ctx.http.start_typing(new_message.channel_id);
+                    let response = localai::get_gpt_response(new_message, &ctx).await?;
+                    new_message.reply(ctx, format!("{}", response)).await?;
+                    typing.stop();
+                }
             }
             // If someone
             else if new_message.content.to_lowercase().contains("fuck")
                 && new_message.author.id != ctx.cache.current_user().id
             {
-                new_message.reply(ctx, format!("Fuck you too")).await?;
+                let reaction = serenity::ReactionType::Custom {
+                    animated: false,
+                    id: serenity::EmojiId::new(1106775701832609902),
+                    name: Some("xdd".to_string()),
+                };
+                new_message.react(ctx, reaction).await?;
+                // new_message.reply(ctx, format!("Fuck you too")).await?;
             } else if new_message.content.to_lowercase().contains("swipe")
                 && new_message.author.id != ctx.cache.current_user().id
             {
@@ -79,18 +98,26 @@ async fn event_handler(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
-    env_logger::init();
+async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<()> {
+    log::info!("Initializing clients and databases...");
 
     KV_DATABASE.get_or_init(|| redb::Database::create("storage.db").unwrap());
+
+    // Make sure tables exist
+    let db = KV_DATABASE.get().unwrap();
+    {
+        let tx = db.begin_write().unwrap();
+        tx.open_table(TABLE).unwrap();
+        tx.open_table(AI_CONTEXT).unwrap();
+        tx.commit().unwrap();
+    }
 
     HTTP_CLIENT.get_or_init(|| reqwest::Client::new());
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
-                anime::anime(),
+                anime::guess(),
                 basic::avatar(),
                 basic::ping(),
                 basic::help(),
@@ -145,11 +172,37 @@ async fn main() {
         url: None,
     };
 
-    let client = serenity::ClientBuilder::new(token, intents)
+    let mut client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
         .activity(activity)
         .register_songbird()
-        .await;
+        .await
+        .expect("Error Creating Client");
 
-    client.unwrap().start().await.unwrap()
+    log::info!("Starting Discord Client...");
+    let _ = client
+        .start()
+        .await
+        .map_err(|why| println!("Client ended: {:?}", why));
+    subsys.on_shutdown_requested().await;
+    log::info!("Shutting down!");
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+    log::info!("Starting tokio startup...");
+
+    // Setup and execute subsystem tree
+    tokio_graceful_shutdown::Toplevel::new(|s| async move {
+        s.start(tokio_graceful_shutdown::SubsystemBuilder::new(
+            "Subsys1", discordbot,
+        ));
+    })
+    .catch_signals()
+    .handle_shutdown_requests(std::time::Duration::from_millis(1000))
+    .await
+    .map_err(Into::into)
 }

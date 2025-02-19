@@ -47,6 +47,7 @@ pub async fn remove(ctx: Context<'_>, key: String) -> Result<(), Error> {
         let mut table = tx.open_table(TABLE)?;
         let _ = table.remove(key.as_str());
     }
+    tx.commit()?;
 
     let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
     let reply = {

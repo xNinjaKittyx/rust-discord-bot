@@ -1,6 +1,8 @@
 use crate::env::{FOOTER_URL, LOCALAI_URL, SERVE_STATIC_URL};
 use crate::{Context, Error, HTTP_CLIENT};
 
+use std::cmp;
+
 use poise::serenity_prelude as serenity;
 use serde::{Deserialize, Serialize};
 
@@ -22,15 +24,31 @@ struct SDPromptResponse {
     data: Vec<SDPromptResponseObjects>,
 }
 
-#[poise::command(prefix_command, slash_command)]
-pub async fn stablediffusion(ctx: Context<'_>, prompt: String) -> Result<(), Error> {
+fn stablediffusion_help() -> String {
+    String::from("Generate an image with Dreamshaper")
+}
+
+#[poise::command(prefix_command, slash_command, help_text_fn = "stablediffusion_help")]
+pub async fn stablediffusion(
+    ctx: Context<'_>,
+    #[description = "Use a | to split between positive and negative attributes in your prompt."]
+    prompt: String,
+    width: Option<u16>,
+    height: Option<u16>,
+) -> Result<(), Error> {
     log::info!("Generating Stable Diffusion with {}", prompt);
+
+    let model_name = "dreamshaper";
 
     let map = SDPrompt {
         prompt: prompt.to_string(),
-        model: "animagine-xl".to_string(),
-        step: 51,
-        size: "1024x1024".to_string(),
+        model: model_name.to_string(),
+        step: 15,
+        size: format!(
+            "{}x{}",
+            cmp::min(width.unwrap_or(1920), 3840),
+            cmp::min(height.unwrap_or(1080), 2160),
+        ),
     };
 
     let resp = HTTP_CLIENT
@@ -51,10 +69,10 @@ pub async fn stablediffusion(ctx: Context<'_>, prompt: String) -> Result<(), Err
     let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
     let reply = {
         let embed = serenity::CreateEmbed::new()
-            .title("StableDiffusion with animagine-xl")
+            .title(format!("StableDiffusion with {}", model_name))
             .description(prompt)
             .image(format!(
-                "{}/{}",
+                "{}{}",
                 &*SERVE_STATIC_URL,
                 response.data[0].url.strip_prefix(&*LOCALAI_URL).unwrap()
             ))

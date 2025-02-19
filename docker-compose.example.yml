@@ -1,0 +1,17 @@
+
+services:
+  rin:
+    build: .
+    volumes:
+      - ./storage.db:/app/storage.db
+    environment:
+      - RUST_LOG=info,tracing=off,serenity=error
+      - DISCORD_TOKEN=
+      - SONARR_API_KEY=
+      - SONARR_URL=https://sonarr.example
+      - FOOTER_URL=your.url
+      # Currently only ollama.
+      - LOCALAI_URL=https://ollama.example
+      - SHOKO_SERVER_API_KEY=
+      - SHOKO_SERVER_URL=https://shoko-server.example
+      - SERVE_STATIC_URL=https://static.example

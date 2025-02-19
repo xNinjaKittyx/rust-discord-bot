@@ -1,8 +1,12 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::env::FOOTER_URL;
 use crate::{Context, Error, HTTP_CLIENT};
 
 use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use songbird::input::{Compose, YoutubeDl};
+use songbird::tracks::PlayMode;
 
 use poise::serenity_prelude as serenity;
 
@@ -17,6 +21,12 @@ pub async fn music(_ctx: Context<'_>) -> Result<(), Error> {
 }
 
 struct TrackErrorNotifier;
+struct TrackStartNotifier {
+    pub ctx: serenity::Context,
+    pub http: Arc<serenity::Http>,
+    pub channel_id: serenity::ChannelId,
+    pub embed: serenity::CreateEmbed,
+}
 
 #[serenity::async_trait]
 impl VoiceEventHandler for TrackErrorNotifier {
@@ -31,6 +41,94 @@ impl VoiceEventHandler for TrackErrorNotifier {
             }
         }
 
+        None
+    }
+}
+
+#[serenity::async_trait]
+impl VoiceEventHandler for TrackStartNotifier {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        log::info!("{:?}", ctx);
+        let ctx_id = self.channel_id.get();
+        let play_button_id = format!("{}play", ctx_id);
+        let pause_button_id = format!("{}pause", ctx_id);
+        let next_button_id = format!("{}next", ctx_id);
+        let volume_down_id = format!("{}voldown", ctx_id);
+        let volume_up_id = format!("{}volup", ctx_id);
+
+        if let EventContext::Track(&[(state, track)]) = ctx {
+            while state.playing != PlayMode::Play {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+
+            let _ = self
+                .channel_id
+                .send_message(
+                    &self.ctx,
+                    serenity::CreateMessage::new()
+                        .add_embed(
+                            self.embed
+                                .clone()
+                                .description(format!("Playing Now ---- Volume: {}", state.volume)),
+                        )
+                        .components(vec![serenity::CreateActionRow::Buttons(vec![
+                            serenity::CreateButton::new(&play_button_id).emoji('▶'),
+                            serenity::CreateButton::new(&pause_button_id).emoji('⏸'),
+                            serenity::CreateButton::new(&next_button_id).emoji('⏭'),
+                            serenity::CreateButton::new(&volume_down_id).emoji('🔉'),
+                            serenity::CreateButton::new(&volume_up_id).emoji('🔊'),
+                        ])]),
+                )
+                .await
+                .unwrap();
+            log::info!("STARTED PLAYING :))))");
+            while let Some(press) =
+                serenity::collector::ComponentInteractionCollector::new(&self.ctx)
+                    .filter(move |press| press.data.custom_id.starts_with(&ctx_id.to_string()))
+                    .timeout(std::time::Duration::from_secs(3600 * 24))
+                    .await
+            {
+                let new_state = track.get_info().await.unwrap();
+                if new_state.playing == PlayMode::End {
+                    break;
+                }
+                if press.data.custom_id == play_button_id {
+                    let _ = track.play();
+                } else if press.data.custom_id == pause_button_id {
+                    let _ = track.pause();
+                } else if press.data.custom_id == volume_down_id {
+                    let _ = track.set_volume((new_state.volume - 0.1).max(0.0));
+                } else if press.data.custom_id == volume_up_id {
+                    let _ = track.set_volume((new_state.volume + 0.1).min(2.0));
+                } else if press.data.custom_id == next_button_id {
+                    let _ = track.stop();
+                    let _ = press
+                        .create_response(
+                            &self.ctx,
+                            serenity::CreateInteractionResponse::UpdateMessage(
+                                serenity::CreateInteractionResponseMessage::new()
+                                    .embed(self.embed.clone().description("Ended"))
+                                    .components(Vec::new()),
+                            ),
+                        )
+                        .await;
+                    break;
+                }
+                let _ = press
+                    .create_response(
+                        &self.ctx,
+                        serenity::CreateInteractionResponse::UpdateMessage(
+                            serenity::CreateInteractionResponseMessage::new().embed(
+                                self.embed.clone().description(format!(
+                                    "Playing Now ---- Volume: {}",
+                                    new_state.volume
+                                )),
+                            ),
+                        ),
+                    )
+                    .await;
+            }
+        }
         None
     }
 }
@@ -117,45 +215,6 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-// #[poise::command(prefix_command, slash_command)]
-// pub async fn skip(ctx: Context<'_>, url: String) -> Result<(), Error> {
-
-//     let manager = songbird::get(ctx.serenity_context())
-//         .await
-//         .expect("Songbird Voice client placed in at initialisation.")
-//         .clone();
-
-//     let guild_id = ctx.guild_id().unwrap();
-//     if let Some(handler_lock) = manager.get(guild_id) {
-//         let mut handler = handler_lock.lock().await;
-
-//         let _ = handler.queue().skip();
-//         let current = handler.queue().current();
-
-//         let reply = match current {
-//             Some(t) => {
-//                 let embed = serenity::CreateEmbed::new()
-//                     .title(metadata.title.unwrap_or("Untitled".to_string()))
-//                     .description(format!("[Source]({}) - Sample Rate: {} - Duration: {}:{}", metadata.source_url.unwrap_or_default(), metadata.sample_rate.unwrap_or_default(), minutes, seconds))
-//                     .image(metadata.thumbnail.unwrap_or_default())
-//                     .footer(footer)
-//                     .timestamp(serenity::model::Timestamp::now());
-//                 poise::CreateReply::default().embed(embed)
-
-//             }
-//             None => {
-
-//             }
-//         };
-
-//         reply = {
-//         };
-//     }
-
-//     Ok(())
-
-// }
-
 #[poise::command(prefix_command, slash_command)]
 pub async fn queue(ctx: Context<'_>, url: String) -> Result<(), Error> {
     let do_search = !url.starts_with("http");
@@ -177,28 +236,50 @@ pub async fn queue(ctx: Context<'_>, url: String) -> Result<(), Error> {
         } else {
             YoutubeDl::new(http_client.clone(), url)
         };
-        let _ = handler.enqueue_input(src.clone().into()).await;
         let metadata = src.aux_metadata().await?;
 
         let seconds = metadata.duration.unwrap_or_default().as_secs();
         let minutes = seconds / 60;
         let seconds = seconds % 60;
+        let title = metadata.title.unwrap_or("Untitled".to_string());
+        let http = ctx.serenity_context().http.clone();
 
-        reply = {
-            let embed = serenity::CreateEmbed::new()
-                .title(metadata.title.unwrap_or("Untitled".to_string()))
-                .description(format!(
-                    "[Source]({}) - Sample Rate: {} - Duration: {}:{}",
-                    metadata.source_url.unwrap_or_default(),
-                    metadata.sample_rate.unwrap_or_default(),
-                    minutes,
-                    seconds
-                ))
-                // .image(metadata.thumbnail.unwrap_or_default())
-                .footer(footer)
-                .timestamp(serenity::model::Timestamp::now());
-            poise::CreateReply::default().embed(embed)
+        let embed = serenity::CreateEmbed::new()
+            .title(title)
+            .description("Queued")
+            .field(
+                "Youtube Video",
+                format!("[Source]({})", metadata.source_url.unwrap_or_default()),
+                true,
+            )
+            .field(
+                "Sample Rate",
+                metadata.sample_rate.unwrap_or_default().to_string(),
+                true,
+            )
+            .field("Duration", format!("{}:{}", minutes, seconds), true)
+            .footer(footer)
+            .timestamp(serenity::model::Timestamp::now());
+
+        let played_embed = embed.clone().image(metadata.thumbnail.unwrap());
+
+        let track_handle = handler.enqueue_input(src.clone().into()).await;
+        let _ = track_handle.pause();
+        let _ = track_handle.add_event(
+            Event::Track(TrackEvent::Playable),
+            TrackStartNotifier {
+                ctx: ctx.serenity_context().clone(),
+                http,
+                channel_id: ctx.channel_id(),
+                embed: played_embed,
+            },
+        );
+        let _ = match handler.queue().current() {
+            Some(track_handle) => track_handle.play(),
+            None => Ok(()),
         };
+
+        reply = poise::CreateReply::default().embed(embed);
     } else {
         reply = {
             let embed = serenity::CreateEmbed::new()
