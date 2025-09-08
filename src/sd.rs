@@ -38,7 +38,7 @@ pub async fn stablediffusion(
 ) -> Result<(), Error> {
     log::info!("Generating Stable Diffusion with {}", prompt);
 
-    let model_name = "dreamshaper";
+    let model_name = "dreamshaper"; // TODO: Configurable
 
     let map = SDPrompt {
         prompt: prompt.to_string(),

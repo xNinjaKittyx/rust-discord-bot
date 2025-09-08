@@ -4,8 +4,11 @@ services:
     build: .
     volumes:
       - ./storage.db:/app/storage.db
+      - ./config.toml:/app/config.toml
+    restart: unless-stopped
     environment:
       - RUST_LOG=info,tracing=off,serenity=error
+      - AUTHOR_ID=
       - DISCORD_TOKEN=
       - SONARR_API_KEY=
       - SONARR_URL=https://sonarr.example

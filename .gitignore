@@ -18,4 +18,5 @@ target/
 
 # Files specific to project
 storage.db
-docker-compose.yml
+compose.yml
+config.toml

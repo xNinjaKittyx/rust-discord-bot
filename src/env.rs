@@ -1,5 +1,11 @@
 use std::sync::LazyLock;
 
+pub static AUTHOR_ID: LazyLock<u64> =
+    LazyLock::new(|| std::env::var("AUTHOR_ID").unwrap().parse::<u64>().unwrap());
+
+pub static DISCORD_TOKEN: LazyLock<String> =
+    LazyLock::new(|| std::env::var("DISCORD_TOKEN").unwrap());
+
 pub static FOOTER_URL: LazyLock<String> = LazyLock::new(|| std::env::var("FOOTER_URL").unwrap());
 
 pub static LOCALAI_URL: LazyLock<String> = LazyLock::new(|| std::env::var("LOCALAI_URL").unwrap());

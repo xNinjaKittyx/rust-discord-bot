@@ -1,4 +1,4 @@
-FROM rust:1.84 AS base
+FROM rust:1.88 AS base
 RUN apt update && apt upgrade -y && apt install -y cmake && apt clean && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --version ^0.1
 RUN cargo install sccache --version ^0.7
@@ -26,7 +26,7 @@ FROM ubuntu:24.04
 WORKDIR /app
 
 RUN apt update && apt upgrade -y && apt install -y curl && apt clean && rm -rf /var/lib/apt/lists/*
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/bin/yt-dlp && chmod a+rx /usr/bin/yt-dlp 
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/bin/yt-dlp && chmod a+rx /usr/bin/yt-dlp
 
 COPY --from=builder /app/target/release/rust-discord-bot rust-discord-bot
 

@@ -1,1 +1,4 @@
 target/
+storage.db
+config.toml
+compose.yml

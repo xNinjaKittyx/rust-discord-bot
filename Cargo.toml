@@ -6,24 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = { version = "0.4.38", features = ["serde"] }
-chrono-tz = "0.9.0"
+base64 = "0.22"
+chrono = { version = "0.4.41", features = ["serde"] }
+chrono-tz = "0.10.4"
 env_logger = "0.11"
 log = { version = "0.4", features = ["std"] }
-miette = "7.2.0"
+miette = "7.6.0"
 poise = "0.6.1"
-redb = "2.4.0"
-regex = "1.10.4"
-reqwest = { version = "0.12.3", features = ["json"] }
-rust_cast = "0.18.1"
+redb = "2.5.0"
+regex = "1.11.1"
+reqwest = { version = "0.12.22", features = ["json"] }
+rust_cast = "0.19.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.138"
+serde_json = "1.0.141"
 strsim = "0.11.1"
-reqwest-websocket = "0.3.0"
-tokio-graceful-shutdown = "0.15.0"
+reqwest-websocket = "0.5.0"
+tokio-graceful-shutdown = "0.16.0"
+toml = "0.9.5"
 
 [dependencies.symphonia]
-version = "0.5.2"
+version = "0.5.4"
 features = ["aac", "mp3", "isomp4", "alac", "mkv", "ogg"]
 
 [dependencies.songbird]
@@ -32,9 +34,9 @@ branch = "next"
 features = ["builtin-queue"]
 
 [dependencies.serenity]
-version = "0.12.1"
+version = "0.12.4"
 features = ["client", "standard_framework", "voice", "rustls_backend", "cache"]
 
 [dependencies.tokio]
-version = "1.43.0"
+version = "1.47.0"
 features = ["macros", "rt-multi-thread", "signal"]

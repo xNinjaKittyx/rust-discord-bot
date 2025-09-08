@@ -1,3 +1,7 @@
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::time::{Duration, SystemTime};
+
 use crate::env::{FOOTER_URL, SHOKO_SERVER_API_KEY, SHOKO_SERVER_URL};
 use crate::{Context, Error, HTTP_CLIENT};
 
@@ -38,7 +42,7 @@ struct Link {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct Poster {
-    i_d: String,
+    i_d: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,11 +61,103 @@ struct IDs {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct IDWithoutMAL {
+    ani_d_b: u32,
+    i_d: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ReleaseGroup {
+    i_d: u32,
+    name: Option<String>,
+    short_name: Option<String>,
+    source: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct AniDBEpisode {
+    release_group: ReleaseGroup,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct AniDB {
     description: String,
     air_date: String,
     end_date: String,
     episode_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Episode {
+    i_ds: IDWithoutMAL,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct MediaInfo {
+    bit_rate: u32,
+    video: Vec<Video>,
+    audio: Vec<Audio>,
+    subtitles: Vec<Subtitle>,
+    chapters: Vec<Chapter>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Video {
+    resolution: String,
+    bit_rate: u32,
+    bit_depth: u8,
+    codec: Codec,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Audio {
+    channels: u8,
+    channel_layout: String,
+    samples_per_frame: u32,
+    sampling_rate: u32,
+    compression_mode: String,
+    bit_rate: u32,
+    codec: Codec,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Subtitle {
+    title: Option<String>,
+    order: u32,
+    language: String,
+    codec: Codec,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Chapter {
+    title: String,
+    language: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Codec {
+    simplified: String,
+    raw: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct File {
+    i_d: u32,
+    size: u64,
+    ani_d_b: Option<AniDBEpisode>,
+    media_info: Option<MediaInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,8 +173,41 @@ struct Anime {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
+struct ShokoFileResponse {
+    total: u32,
+    list: Vec<File>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ShokoEpisodeResponse {
+    total: u32,
+    list: Vec<Episode>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 struct ShokoSeriesResponse {
     list: Vec<Anime>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ShokoStats {
+    file_count: u32,
+    series_count: u32,
+    group_count: u32,
+    file_size: u64,
+    finished_series: u32,
+    watched_episodes: u32,
+    watched_hours: f64,
+    percent_duplicate: f64,
+    missing_episodes: u32,
+    missing_episodes_collecting: u32,
+    unrecognized_files: u32,
+    series_with_missing_links: u32,
+    episodes_with_multiple_files: u32,
+    files_with_duplicate_locations: u32,
 }
 
 fn format_links(text: &str) -> String {
@@ -109,10 +238,50 @@ fn find_best_scoring_string<'a>(text: &String, results: &'a ShokoSeriesResponse)
     best_match
 }
 
+async fn get_anilist_id_from_mal_id(
+    mal_id: u32,
+) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    let url = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/master/anime_ids.json";
+    let local_path = "anime_ids.json";
+    let update_interval = Duration::from_secs(60 * 60 * 24); // 24 hours
+
+    let needs_update = match fs::metadata(local_path) {
+        Ok(meta) => match meta.modified() {
+            Ok(modified) => {
+                SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or(update_interval + Duration::from_secs(1))
+                    > update_interval
+            }
+            Err(_) => true,
+        },
+        Err(_) => true,
+    };
+
+    if needs_update {
+        let resp = reqwest::get(url).await?;
+        let remote_bytes = resp.bytes().await?;
+        fs::write(local_path, &remote_bytes)?;
+    }
+
+    let data = fs::read(local_path)?;
+    let json: HashMap<String, serde_json::Value> = serde_json::from_slice(&data)?;
+    for (_key, value) in json.iter() {
+        if let Some(local_mal_id) = value.get("mal_id").and_then(|v| v.as_u64()) {
+            if local_mal_id == mal_id as u64 {
+                if let Some(anilist_id) = value.get("anilist_id").and_then(|v| v.as_u64()) {
+                    return Ok(Some(anilist_id as u32));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 #[poise::command(
     prefix_command,
     slash_command,
-    subcommands("search"),
+    subcommands("search", "stats"),
     subcommand_required
 )]
 pub async fn shoko(_ctx: Context<'_>) -> Result<(), Error> {
@@ -120,23 +289,60 @@ pub async fn shoko(_ctx: Context<'_>) -> Result<(), Error> {
 }
 
 #[poise::command(prefix_command, slash_command)]
+pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
+    let resp = HTTP_CLIENT
+        .get()
+        .unwrap()
+        .get(format!("{}/api/v3/Dashboard/Stats", &*SHOKO_SERVER_URL))
+        .header("apikey", &*SHOKO_SERVER_API_KEY)
+        .send()
+        .await?;
+
+    let text = resp.text().await?;
+    log::info!("Shoko Server returned {}", text.as_str());
+
+    let stats: ShokoStats = serde_json::from_str(text.as_str())?;
+
+    let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
+    let reply = {
+        let embed = serenity::CreateEmbed::new()
+            .title("VFS Anime Stats")
+            .fields(vec![
+                ("Files Count", format!("{}", &stats.file_count), true),
+                ("Series Count", format!("{}", &stats.series_count), true),
+                ("File Size", format!("{}", &stats.file_size), true),
+            ])
+            .footer(footer)
+            // Add a timestamp for the current time
+            // This also accepts a rfc3339 Timestamp
+            .timestamp(serenity::model::Timestamp::now());
+
+        poise::CreateReply::default().embed(embed)
+    };
+
+    ctx.send(reply).await?;
+    Ok(())
+}
+
+#[poise::command(prefix_command, slash_command)]
 pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
-    let mut map = ShokoSeriesRequest {
+    let map = ShokoSeriesRequest {
         apply_at_series_level: false,
         expression: Expression {
             left: ExpressionType {
-                r#type: "NameSelector".to_string(),
+                r#type: "NamesSelector".to_string(),
             },
             parameter: value,
-            r#type: "StringEquals".to_string(),
+            r#type: "AnyContains".to_string(),
         },
     };
-    log::info!("Making HTTP Search Request to Shoko Server with Exact Match");
+    let result;
+    log::info!("Making HTTP Request to Shoko Server with AnyContains");
     let resp = HTTP_CLIENT
         .get()
         .unwrap()
         .post(format!(
-            "{}/api/v3/Filter/Preview/Series?pageSize=1&page=1",
+            "{}/api/v3/Filter/Preview/Series?pageSize=100&page=1",
             &*SHOKO_SERVER_URL
         ))
         .header("apikey", &*SHOKO_SERVER_API_KEY)
@@ -144,38 +350,33 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
         .send()
         .await?;
 
-    let mut text = resp.text().await?;
+    let text = resp.text().await?;
     log::info!("Shoko Server returned {}", text.as_str());
-    let mut results: ShokoSeriesResponse = serde_json::from_str(text.as_str())?;
-    let result;
-    if results.list.is_empty() {
-        log::info!("Making HTTP Request to Shoko Server with Fuzzy Match");
-        map.expression.r#type = "StringFuzzyMatches".to_string();
-        let resp = HTTP_CLIENT
-            .get()
-            .unwrap()
-            .post(format!(
-                "{}/api/v3/Filter/Preview/Series?pageSize=100&page=1",
-                &*SHOKO_SERVER_URL
-            ))
-            .header("apikey", &*SHOKO_SERVER_API_KEY)
-            .json(&map)
-            .send()
-            .await?;
+    let results: ShokoSeriesResponse = serde_json::from_str(text.as_str())?;
 
-        text = resp.text().await?;
-        log::info!("Shoko Server returned {}", text.as_str());
-        results = serde_json::from_str(text.as_str())?;
-
+    if !results.list.is_empty() {
         result = find_best_scoring_string(&map.expression.parameter, &results);
     } else {
-        result = &results.list[0];
+        log::warn!("No results found for search: {}", map.expression.parameter);
+        ctx.send(poise::CreateReply::default().content("No results found."))
+            .await?;
+        return Ok(());
     }
 
     let mut mal_vec: Vec<String> = Vec::new();
+    let mut mal_id: Option<u32> = None;
     for value in &result.i_ds.m_a_l {
-        mal_vec.push(format!("[Link](https://myanimelist.net/anime/{})", value))
+        mal_vec.push(format!(
+            "[MyAnimeList](https://myanimelist.net/anime/{})",
+            value
+        ));
+
+        // Some have multiple mal IDs, generally the first one is the right one.
+        if mal_id.is_none() {
+            mal_id = Some(*value);
+        }
     }
+    let mal_id = mal_id.unwrap_or(0);
     let mal_string = mal_vec.join("\n");
 
     log::info!("GET Shoko Server Image Poster Data");
@@ -206,32 +407,155 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
         .send()
         .await?;
     let text = resp.text().await?;
-    log::trace!("Shoko Server returned {}", text.as_str());
+    log::info!("Shoko Server returned {}", text.as_str());
 
     let series: Anime = serde_json::from_str(text.as_str())?;
 
     let anidb = &series.ani_d_b.unwrap();
 
+    // Grab one of the Episode IDs to figure out the ReleaseGroup
+    let resp = HTTP_CLIENT
+        .get()
+        .unwrap()
+        .get(format!(
+            "{}/api/v3/Series/{}/Episode?pageSize=1&includeMissing=false&includeWatched=true&includeHidden=false&includeUnaired=false",
+            &*SHOKO_SERVER_URL, &result.i_ds.i_d
+        ))
+        .header("apikey", &*SHOKO_SERVER_API_KEY)
+        .send()
+        .await?;
+    let text = resp.text().await?;
+    log::info!("Shoko Server returned {}", text.as_str());
+
+    let episodes: ShokoEpisodeResponse = serde_json::from_str(text.as_str())?;
+
+    let mut release_group: String = "Unknown Release Group".to_string();
+    let mut video_codec: String = "Unknown Video Codec".to_string();
+    let mut audio_codec: String = "Unknown Audio Codec".to_string();
+    let mut video_bit_depth: u8 = 10;
+    let mut video_resolution: String = "Unknown Resolution".to_string();
+    let mut video_bit_rate: f32 = 0.0;
+
+    if episodes.total == 0 {
+        log::warn!("No episodes found for series {}", result.name);
+    } else {
+        // Grab the File so we can figure out the release group.
+        let resp = HTTP_CLIENT
+            .get()
+            .unwrap()
+            .get(format!(
+                "{}/api/v3/Episode/{}/File?includeDataFrom=AniDB&include=MediaInfo",
+                &*SHOKO_SERVER_URL, &episodes.list[0].i_ds.i_d
+            ))
+            .header("apikey", &*SHOKO_SERVER_API_KEY)
+            .send()
+            .await?;
+        let text = resp.text().await?;
+        log::info!("Shoko Server returned {}", text.as_str());
+        let files: ShokoFileResponse = serde_json::from_str(text.as_str())?;
+
+        if let Some(file) = files.list.first() {
+            let media_info = file.media_info.as_ref().unwrap();
+            video_codec = media_info.video.first().unwrap().codec.simplified.clone();
+            audio_codec = media_info.audio.first().unwrap().codec.simplified.clone();
+            video_bit_depth = media_info.video.first().unwrap().bit_depth.clone();
+            video_resolution = media_info.video.first().unwrap().resolution.clone();
+            video_bit_rate = media_info.bit_rate as f32 / 1024.0 / 1024.0; // Convert to Mb/s
+
+            if let Some(ani_d_b) = &file.ani_d_b {
+                release_group = ani_d_b
+                    .release_group
+                    .name
+                    .clone()
+                    .unwrap_or("Unknown Release Group".to_string());
+            } else {
+                log::warn!("No AniDB data found for file ID {}", file.i_d);
+                release_group = "Unknown Release Group".to_string();
+            }
+        } else {
+            log::warn!("No files found for series {}", result.name);
+            release_group = "No Files Found".to_string();
+        }
+    }
+
+    // Info from SeaDex if this release is a good one.
+
+    let alid: u32 = get_anilist_id_from_mal_id(mal_id)
+        .await
+        .unwrap_or(None)
+        .unwrap_or(0);
+    log::info!("mal_id {} - alid {}", mal_id, alid);
+
+    // Convert AniDB ID to AniListID
+    let mut group_list = "No releases found".to_string();
+    if alid != 0 {
+        let resp = HTTP_CLIENT
+            .get()
+            .unwrap()
+            .get(format!(
+                "https://releases.moe/api/collections/entries/records?filter=alID={}&expand=trs&filter=trs.tracker=%27Nyaa%27&fields=expand.trs.releaseGroup",
+                &alid,
+            ))
+            .send()
+            .await?;
+        let text = resp.text().await?;
+        log::info!("Releases.moe returned {}", text.as_str());
+
+        // Extract unique release group names
+        let mut release_groups = HashSet::new();
+        let json: serde_json::Value = serde_json::from_str(&text)?;
+        if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(trs) = item
+                    .get("expand")
+                    .and_then(|expand| expand.get("trs"))
+                    .and_then(|trs| trs.as_array())
+                {
+                    for tr in trs {
+                        if let Some(group) = tr.get("releaseGroup").and_then(|g| g.as_str()) {
+                            release_groups.insert(group.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // Join the set into a comma-separated string
+        group_list = release_groups.into_iter().collect::<Vec<_>>().join(", ");
+        if group_list.is_empty() {
+            group_list = "No Good Release Available".to_string();
+        }
+    }
+
     let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
     let reply = {
         let embed = serenity::CreateEmbed::new()
             .title(&result.name)
+            .url(&result.links[0].u_r_l)
             .description(format_links(&anidb.description))
             .image("attachment://poster.png")
             .fields(vec![
                 ("Episodes", format!("{}", &anidb.episode_count), true),
                 ("Aired Date", format!("{}", &anidb.air_date), true),
                 (
-                    "AniDB",
-                    format!("[Link](https://anidb.net/anime/{})", result.i_ds.ani_d_b),
-                    false,
+                    "Links",
+                    format!("[AniDB](https://anidb.net/anime/{})\n{}\n[AniList](https://anilist.co/anime/{})", result.i_ds.ani_d_b, mal_string, alid),
+                    true,
                 ),
-                ("MyAnimeList", mal_string, false),
                 (
-                    "Source",
-                    format!("[Link]({})", result.links[0].u_r_l),
-                    false,
+                    "Releases.moe",
+                    format!("[{}](https://releases.moe/{})", group_list, alid),
+                    true,
                 ),
+                (
+                    "Current Shoko Release",
+                    format!("[{}]({}/webui/collection/series/{}/overview)", release_group, &*SHOKO_SERVER_URL, result.i_ds.i_d),
+                    true,
+                ),
+                (
+                    "File Details",
+                    format!("[{}][{}][{}-bit][{}][{:.2} Mb/s]", video_codec, audio_codec, video_bit_depth, video_resolution, video_bit_rate),
+                    true,
+                )
             ])
             .footer(footer)
             // Add a timestamp for the current time

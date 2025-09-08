@@ -4,22 +4,22 @@ use crate::{Context, Error, HTTP_CLIENT};
 use poise::serenity_prelude as serenity;
 
 #[poise::command(prefix_command, slash_command)]
-pub async fn shibe(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn fox(ctx: Context<'_>) -> Result<(), Error> {
     let resp = HTTP_CLIENT
         .get()
         .unwrap()
-        .get("https://shibe.online/api/shibes")
+        .get("https://randomfox.ca/floof")
         .send()
         .await?;
 
     let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
-    let image = resp.text().await?;
-    let links: Vec<String> = serde_json::from_str(image.as_str())?;
+    let json: serde_json::Value = resp.json().await?; // Parse JSON response
+    let image_url = json["image"].as_str().unwrap_or(""); // Extract the image field
     let reply = {
         let embed = serenity::CreateEmbed::new()
-            .title("wow")
-            .description("## such doge\n       # much impress\n   ### very fluff\n    so cool")
-            .image(&links[0])
+            .title("what does the fox say?")
+            .description("xdd")
+            .image(image_url) // Use the correct image URL
             .footer(footer)
             // Add a timestamp for the current time
             // This also accepts a rfc3339 Timestamp

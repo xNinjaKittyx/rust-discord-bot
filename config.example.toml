@@ -1,0 +1,28 @@
+[response]
+
+[response.boosted]
+contains = ["xdd", "boosted"]
+case_sensitive = false
+exact_match = false
+
+[response.boosted.reaction]
+enabled = true
+animated = false
+emoji_id = 1106775701832609902
+emoji_name = "xdd"
+
+[response.boosted.reply]
+enabled = false
+text = ""
+
+[response.swipe]
+contains = ["swipe"]
+case_sensitive = false
+exact_match = true
+
+[response.swipe.reaction]
+enabled = false
+
+[response.swipe.reply]
+enabled = true
+text = "https://www.youtube.com/watch?v=juN3vjJAzME&t=35s"
