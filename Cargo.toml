@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.141"
 strsim = "0.11.1"
 reqwest-websocket = "0.5.0"
-tokio-graceful-shutdown = "0.16.0"
+tokio-graceful-shutdown = "0.19.0"
 toml = "0.9.5"
 uuid = { version = "1.11", features = ["v4"] }
 yt-dlp = "1.4.7"
