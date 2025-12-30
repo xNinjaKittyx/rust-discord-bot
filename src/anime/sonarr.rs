@@ -1,5 +1,5 @@
+use crate::anime::sonarr_serde;
 use crate::env::{FOOTER_URL, SONARR_API_KEY, SONARR_URL};
-use crate::sonarr_serde;
 use crate::{Context, Error, HTTP_CLIENT};
 
 use chrono_tz::America::Los_Angeles;
@@ -198,13 +198,14 @@ async fn parse_history(daily: bool) -> Result<Vec<sonarr_serde::History>, serde_
     prefix_command,
     slash_command,
     subcommands("follow", "schedule", "recent", "showall"),
-    subcommand_required
+    subcommand_required,
+    category = "Anime"
 )]
 pub async fn sonarr(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Anime")]
 pub async fn follow(ctx: Context<'_>) -> Result<(), Error> {
     let shows = parse_shows().await?;
 
@@ -232,12 +233,12 @@ pub async fn follow(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Anime")]
 pub async fn schedule(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Anime")]
 pub async fn showall(ctx: Context<'_>) -> Result<(), Error> {
     let shows = parse_shows().await?;
     let mut embeds: Vec<serenity::CreateEmbed> = Vec::new();
@@ -280,7 +281,7 @@ pub async fn showall(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Anime")]
 pub async fn recent(ctx: Context<'_>, weekly: bool) -> Result<(), Error> {
     let history: Vec<sonarr_serde::History> = parse_history(!weekly).await?;
 

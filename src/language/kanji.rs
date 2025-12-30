@@ -18,8 +18,11 @@ struct KanjiResult {
     stroke_count: u16,
 }
 
-#[poise::command(prefix_command, slash_command)]
-pub async fn kanji(ctx: Context<'_>, kanji: String) -> Result<(), Error> {
+#[poise::command(prefix_command, slash_command, category = "Utility")]
+pub async fn kanji(
+    ctx: Context<'_>,
+    #[description = "Japanese kanji character to lookup"] kanji: String,
+) -> Result<(), Error> {
     let url = format!("https://kanjiapi.dev/v1/kanji/{}", kanji);
     log::info!("Sending Request to {}", url);
     let resp = HTTP_CLIENT.get().unwrap().get(url).send().await?;

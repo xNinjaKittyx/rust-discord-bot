@@ -29,7 +29,7 @@ struct Roulette {
     pub themes: Vec<Theme>,
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Anime")]
 pub async fn guess(ctx: Context<'_>) -> Result<(), Error> {
     let manager = songbird::get(ctx.serenity_context())
         .await

@@ -6,13 +6,17 @@ services:
       - ./storage.db:/app/storage.db
       - ./config.toml:/app/config.toml
     restart: unless-stopped
+    ports:
+      - 8080:8080
     environment:
-      - RUST_LOG=info,tracing=off,serenity=error
       - AUTHOR_ID=
       - DISCORD_TOKEN=
       - SONARR_API_KEY=
       - SONARR_URL=https://sonarr.example
       - FOOTER_URL=your.url
+      - OPEN_WEATHER_MAP_API_KEY=
+      - KICK_CLIENT_ID=
+      - KICK_CLIENT_SECRET=
       # Currently only ollama.
       - LOCALAI_URL=https://ollama.example
       - SHOKO_SERVER_API_KEY=

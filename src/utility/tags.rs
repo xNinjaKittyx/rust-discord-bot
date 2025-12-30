@@ -8,13 +8,14 @@ use redb::ReadableTable;
     prefix_command,
     slash_command,
     subcommands("add", "remove", "show", "showall"),
-    subcommand_required
+    subcommand_required,
+    category = "Utility"
 )]
 pub async fn tag(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command, owners_only)]
+#[poise::command(prefix_command, slash_command, owners_only, category = "Utility")]
 pub async fn add(ctx: Context<'_>, key: String, value: String) -> Result<(), Error> {
     let db = KV_DATABASE.get().unwrap();
     let tx = db.begin_write()?;
@@ -39,7 +40,7 @@ pub async fn add(ctx: Context<'_>, key: String, value: String) -> Result<(), Err
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command, owners_only)]
+#[poise::command(prefix_command, slash_command, owners_only, category = "Utility")]
 pub async fn remove(ctx: Context<'_>, key: String) -> Result<(), Error> {
     let db = KV_DATABASE.get().unwrap();
     let tx = db.begin_write()?;
@@ -64,7 +65,7 @@ pub async fn remove(ctx: Context<'_>, key: String) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Utility")]
 pub async fn show(ctx: Context<'_>, key: String) -> Result<(), Error> {
     let db = KV_DATABASE.get().unwrap();
     let tx = db.begin_read()?;
@@ -93,7 +94,7 @@ pub async fn show(ctx: Context<'_>, key: String) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Utility")]
 pub async fn showall(ctx: Context<'_>) -> Result<(), Error> {
     let db = KV_DATABASE.get().unwrap();
     let tx = db.begin_read()?;

@@ -1,36 +1,42 @@
+mod ai;
 mod anime;
-mod basic;
 mod env;
-mod fun;
-mod kanji;
-mod localai;
+mod fixembed;
+mod language;
 mod music;
-mod sd;
-mod shoko;
-mod sonarr;
-mod sonarr_serde;
-mod tags;
+mod permissions;
+mod random;
+mod streams;
+mod tmdb;
+mod utility;
+mod web;
 
-use std::fs;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use ::serenity::all::{MessageBuilder, UserId};
 use miette::Result;
 use poise::serenity_prelude as serenity;
+use simplelog::{ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, WriteLogger};
 use songbird::SerenityInit;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 // User data, which is stored and accessible in all command invocations
+#[derive(Debug)]
 pub struct Data {}
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static KV_DATABASE: OnceLock<redb::Database> = OnceLock::new();
-static REACTION_CONFIG: OnceLock<Config> = OnceLock::new();
+static REACTION_CONFIG: OnceLock<random::response::Config> = OnceLock::new();
+static START_TIME: OnceLock<Instant> = OnceLock::new();
+static COMMANDS_LIST: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
+static EMOJIS_LIST: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
 
 const TABLE: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("tags");
 const AI_CONTEXT: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("context");
+const STREAMS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("streams");
+const PERMISSIONS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("permissions");
+const HISTORY: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("history");
 
 fn split_string_chunks(long_string: &str, chunk_size: usize) -> Vec<String> {
     long_string
@@ -39,43 +45,6 @@ fn split_string_chunks(long_string: &str, chunk_size: usize) -> Vec<String> {
         .chunks(chunk_size)
         .map(|chunk| chunk.iter().collect::<String>())
         .collect()
-}
-
-use serde::Deserialize;
-
-#[derive(Deserialize, Debug)]
-struct ReactionConfig {
-    enabled: bool,
-    animated: Option<bool>,
-    emoji_id: Option<u64>,
-    emoji_name: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct ReplyConfig {
-    enabled: bool,
-    text: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Response {
-    contains: Vec<String>,
-    case_sensitive: bool,
-    exact_match: bool,
-    author: Option<Vec<serenity::UserId>>, // Add author field
-    reaction: Option<ReactionConfig>,
-    reply: Option<ReplyConfig>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Config {
-    response: std::collections::HashMap<String, Response>,
-}
-
-fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
-    let config_content = fs::read_to_string("config.toml")?;
-    let config: Config = toml::from_str(&config_content)?;
-    Ok(config)
 }
 
 // Event Handler
@@ -87,7 +56,27 @@ async fn event_handler(
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
+            START_TIME.get_or_init(|| Instant::now());
             log::info!("Logged in as {}", data_about_bot.user.name);
+
+            // Collect emojis from all guilds
+            let mut emojis = Vec::new();
+            for guild_id in ctx.cache.guilds() {
+                if let Some(guild) = ctx.cache.guild(guild_id) {
+                    for emoji in guild.emojis.values() {
+                        emojis.push(serde_json::json!({
+                            "id": emoji.id.to_string(),
+                            "name": emoji.name,
+                            "animated": emoji.animated,
+                            "url": emoji.url(),
+                            "guild_id": guild_id.to_string(),
+                            "guild_name": guild.name.clone(),
+                        }));
+                    }
+                }
+            }
+            log::info!("Collected {} emojis from {} guilds", emojis.len(), ctx.cache.guilds().len());
+            let _ = EMOJIS_LIST.set(emojis);
         }
         serenity::FullEvent::Message { new_message } => 'message_match: {
             let lower_case_msg = new_message.content.to_lowercase();
@@ -98,14 +87,14 @@ async fn event_handler(
                 if lower_case_msg.contains("please wipe all context")
                     && new_message.author.id == *env::AUTHOR_ID
                 {
-                    localai::wipe_context(new_message).await?;
+                    ai::localai::wipe_context(new_message).await?;
                     new_message
                         .reply(ctx, format!("Wiped all context."))
                         .await?;
                 } else {
                     let start = Instant::now();
                     let typing = ctx.http.start_typing(new_message.channel_id);
-                    let response = localai::get_gpt_response(new_message, &ctx).await?;
+                    let response = ai::localai::get_gpt_response(new_message, &ctx).await?;
 
                     log::info!("Response: {:#?}", response);
                     let chunks = split_string_chunks(&response, 2000);
@@ -121,56 +110,9 @@ async fn event_handler(
             }
 
             let config = REACTION_CONFIG.get().unwrap();
+            random::response::handle_message_response(ctx, new_message, config).await?;
 
-            for (_, response) in &config.response {
-                if let Some(authors) = &response.author {
-                    if !authors.is_empty() && !authors.contains(&new_message.author.id) {
-                        continue; // Skip if the author is not in the list
-                    }
-                }
-
-                let message_content = if response.case_sensitive {
-                    new_message.content.clone()
-                } else {
-                    new_message.content.to_lowercase()
-                };
-
-                let matches = if response.exact_match {
-                    response.contains.iter().any(|c| message_content == *c)
-                } else {
-                    response
-                        .contains
-                        .iter()
-                        .any(|c| message_content.contains(c))
-                };
-
-                if matches {
-                    if let Some(reaction_config) = &response.reaction {
-                        if reaction_config.enabled {
-                            if let (Some(animated), Some(emoji_id), Some(emoji_name)) = (
-                                reaction_config.animated,
-                                reaction_config.emoji_id,
-                                &reaction_config.emoji_name,
-                            ) {
-                                let reaction = serenity::ReactionType::Custom {
-                                    animated,
-                                    id: serenity::EmojiId::new(emoji_id),
-                                    name: Some(emoji_name.clone()),
-                                };
-                                new_message.react(ctx, reaction).await?;
-                            }
-                        }
-                    }
-
-                    if let Some(reply_config) = &response.reply {
-                        if reply_config.enabled {
-                            if let Some(text) = &reply_config.text {
-                                new_message.reply(ctx, text).await?;
-                            }
-                        }
-                    }
-                }
-            }
+            fixembed::process_fix_embed(ctx, new_message).await?;
         }
         _ => {}
     }
@@ -188,26 +130,42 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
         let tx = db.begin_write().unwrap();
         tx.open_table(TABLE).unwrap();
         tx.open_table(AI_CONTEXT).unwrap();
+        tx.open_table(STREAMS).unwrap();
+        tx.open_table(PERMISSIONS).unwrap();
+        tx.open_table(HISTORY).unwrap();
         tx.commit().unwrap();
     }
 
     HTTP_CLIENT.get_or_init(|| reqwest::Client::new());
-    REACTION_CONFIG.get_or_init(|| load_config().unwrap());
+    REACTION_CONFIG.get_or_init(|| random::response::load_config().unwrap());
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
-                anime::guess(),
-                basic::avatar(),
-                basic::ping(),
-                basic::help(),
-                fun::fox(),
-                kanji::kanji(),
-                music::music(),
-                sd::stablediffusion(),
-                shoko::shoko(),
-                sonarr::sonarr(),
-                tags::tag(),
+                ai::sd::stablediffusion(),
+                anime::op::guess(),
+                anime::shoko::shoko(),
+                anime::sonarr::sonarr(),
+                random::basic::avatar(),
+                random::basic::bing(),
+                random::basic::ping(),
+                random::basic::help(),
+                random::basic::uptime(),
+                random::fox::fox(),
+                random::weather::weather(),
+                language::kanji::kanji(),
+                music::music::music(),
+                music::musicclip::yt_edit(),
+                streams::follow(),
+                streams::unfollow(),
+                streams::following(),
+                streams::preview(),
+                permissions::addperm(),
+                permissions::removeperm(),
+                permissions::listperms(),
+                utility::tags::tag(),
+                tmdb::movie(),
+                tmdb::tv(),
             ],
             prefix_options: poise::PrefixFrameworkOptions {
                 prefix: Some("~".into()),
@@ -215,27 +173,238 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
             },
             on_error: |error| {
                 Box::pin(async move {
-                    log::info!("Failed with {}", error);
                     match error {
+                        poise::FrameworkError::Command { error, ctx, .. } => {
+                            log::error!("Command error in '{}': {:?}", ctx.command().name, error);
+                            let error_msg = format!("❌ Error: {}\nDetails:\n```\n{:?}\n```", error, error);
+                            let _ = ctx.say(error_msg).await;
+
+                            // Log failed command to history
+                            if let Some(db) = KV_DATABASE.get() {
+                                let timestamp = chrono::Utc::now().to_rfc3339();
+                                let user = ctx.author();
+                                let command_name = ctx.command().qualified_name.clone();
+
+                                // Capture full invocation with arguments
+                                let full_invocation = match ctx {
+                                    poise::Context::Prefix(pctx) => pctx.msg.content.clone(),
+                                    poise::Context::Application(actx) => {
+                                        // For slash commands, reconstruct from command name and options
+                                        let mut invocation = format!("{}", &command_name);
+                                        let options = &actx.interaction.data.options;
+                                        if !options.is_empty() {
+                                            for option in options {
+                                                invocation.push_str(&format!(" {}:{:?}", option.name, option.value));
+                                            }
+                                        }
+                                        invocation
+                                    }
+                                };
+
+                                let (guild, channel) = match ctx {
+                                    poise::Context::Prefix(pctx) => (
+                                        pctx.msg.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
+                                        pctx.msg.channel_id.to_string()
+                                    ),
+                                    poise::Context::Application(actx) => (
+                                        actx.interaction.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
+                                        actx.interaction.channel_id.to_string()
+                                    )
+                                };
+
+                                let history_entry = serde_json::json!({
+                                    "timestamp": timestamp,
+                                    "user": user.name,
+                                    "user_id": user.id.to_string(),
+                                    "command": command_name,
+                                    "full_invocation": full_invocation,
+                                    "guild": guild,
+                                    "channel": channel,
+                                    "success": false,
+                                    "error": format!("{:?}", error)
+                                });
+
+                                let key = format!("{}_{}", timestamp, user.id);
+
+                                if let Ok(tx) = db.begin_write() {
+                                    {
+                                        if let Ok(mut table) = tx.open_table(HISTORY) {
+                                            let _ = table.insert(key.as_str(), history_entry.to_string().as_str());
+                                        }
+                                    }
+                                    let _ = tx.commit();
+                                }
+                            }
+                        }
                         poise::FrameworkError::ArgumentParse { error, .. } => {
                             if let Some(error) = error.downcast_ref::<serenity::RoleParseError>() {
                                 log::warn!("Found a RoleParseError: {:?}", error);
                             } else {
-                                log::warn!("Not a RoleParseError :(");
+                                log::warn!("ArgumentParse error: {}", error);
                             }
                         }
-                        other => poise::builtins::on_error(other).await.unwrap(),
+                        other => {
+                            log::error!("Framework error occurred");
+                            poise::builtins::on_error(other).await.unwrap()
+                        },
                     }
                 })
             },
             event_handler: |ctx, event, framework, data| {
                 Box::pin(event_handler(ctx, event, framework, data))
             },
+            post_command: |ctx| {
+                Box::pin(async move {
+                    // Log command execution to history
+                    let db = match KV_DATABASE.get() {
+                        Some(db) => db,
+                        None => return
+                    };
+
+                    let timestamp = chrono::Utc::now().to_rfc3339();
+                    let user = ctx.author();
+                    let command_name = ctx.command().qualified_name.clone();
+
+                    // Capture full invocation with arguments
+                    let full_invocation = match ctx {
+                        poise::Context::Prefix(pctx) => pctx.msg.content.clone(),
+                        poise::Context::Application(actx) => {
+                            // For slash commands, reconstruct from command name and options
+                            let mut invocation = format!("{}", &command_name);
+                            let options = &actx.interaction.data.options;
+                            if !options.is_empty() {
+                                for option in options {
+                                    invocation.push_str(&format!(" {}:{:?}", option.name, option.value));
+                                }
+                            }
+                            invocation
+                        }
+                    };
+
+                    let (guild, channel) = match ctx {
+                        poise::Context::Prefix(pctx) => (
+                            pctx.msg.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
+                            pctx.msg.channel_id.to_string()
+                        ),
+                        poise::Context::Application(actx) => (
+                            actx.interaction.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
+                            actx.interaction.channel_id.to_string()
+                        )
+                    };
+
+                    let history_entry = serde_json::json!({
+                        "timestamp": timestamp,
+                        "user": user.name,
+                        "user_id": user.id.to_string(),
+                        "command": command_name,
+                        "full_invocation": full_invocation,
+                        "guild": guild,
+                        "channel": channel,
+                        "success": true
+                    });
+
+                    let key = format!("{}_{}", timestamp, user.id);
+
+                    if let Ok(tx) = db.begin_write() {
+                        {
+                            if let Ok(mut table) = tx.open_table(HISTORY) {
+                                let _ = table.insert(key.as_str(), history_entry.to_string().as_str());
+                            }
+                        }
+                        let _ = tx.commit();
+                    }
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+
+                // Extract command metadata for web API
+                fn extract_commands(cmd: &poise::Command<crate::Data, Box<dyn std::error::Error + Send + Sync>>, parent_name: Option<&str>) -> Vec<serde_json::Value> {
+                    let mut results = Vec::new();
+
+                    // Skip parent command if it has subcommand_required
+                    let has_subcommands = !cmd.subcommands.is_empty();
+                    let subcommand_required = cmd.subcommand_required;
+
+                    if !subcommand_required || !has_subcommands {
+                        let category = cmd.category.as_ref()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "Other".to_string());
+
+                        // Build full command path
+                        let full_command_path = if let Some(parent) = parent_name {
+                            format!("{} {}", parent, cmd.name)
+                        } else {
+                            cmd.name.clone()
+                        };
+
+                        let usage = if !cmd.parameters.is_empty() {
+                            let params: Vec<String> = cmd.parameters.iter().map(|p| {
+                                if p.required {
+                                    format!("<{}>", p.name)
+                                } else {
+                                    format!("[{}]", p.name)
+                                }
+                            }).collect();
+                            format!("/{} {}", full_command_path, params.join(" "))
+                        } else {
+                            format!("/{}", full_command_path)
+                        };
+
+                        // Format command name with aliases (using full path)
+                        let name_with_aliases = if !cmd.aliases.is_empty() {
+                            format!("{} ({})", full_command_path, cmd.aliases.join(", "))
+                        } else {
+                            full_command_path.clone()
+                        };
+
+                        // Build full description with parameter details
+                        let mut full_description = cmd.description.as_deref().unwrap_or("No description available").to_string();
+
+                        if !cmd.parameters.is_empty() {
+                            full_description.push_str("\n\n**Parameters:**");
+                            for param in &cmd.parameters {
+                                let param_desc = param.description.as_deref().unwrap_or("No description");
+                                let required_marker = if param.required { "(required)" } else { "(optional)" };
+                                full_description.push_str(&format!("\n• `{}` {} - {}", param.name, required_marker, param_desc));
+                            }
+                        }
+
+                        results.push(serde_json::json!({
+                            "name": name_with_aliases,
+                            "description": full_description,
+                            "category": category,
+                            "usage": usage
+                        }));
+                    }
+
+                    // Recursively extract subcommands
+                    if has_subcommands {
+                        for subcmd in &cmd.subcommands {
+                            let parent = if let Some(p) = parent_name {
+                                format!("{} {}", p, cmd.name)
+                            } else {
+                                cmd.name.clone()
+                            };
+                            results.extend(extract_commands(subcmd, Some(&parent)));
+                        }
+                    }
+
+                    results
+                }
+
+                let commands_metadata: Vec<serde_json::Value> = framework
+                    .options()
+                    .commands
+                    .iter()
+                    .flat_map(|cmd| extract_commands(cmd, None))
+                    .collect();
+
+                let _ = COMMANDS_LIST.set(commands_metadata);
+
                 Ok(Data {})
             })
         })
@@ -259,6 +428,12 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
         .await
         .expect("Error Creating Client");
 
+    // Start the stream checker background task
+    let http_clone = client.http.clone();
+    tokio::spawn(async move {
+        streams::start_stream_checker(http_clone).await;
+    });
+
     log::info!("Starting Discord Client...");
     let _ = client
         .start()
@@ -272,13 +447,38 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    let config = ConfigBuilder::new()
+        .add_filter_ignore_str("tracing")
+        .add_filter_ignore_str("serenity")
+        .build();
+
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Info,
+            config.clone(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(
+            LevelFilter::Info,
+            config,
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("bot.log")
+                .unwrap(),
+        ),
+    ])
+    .unwrap();
     log::info!("Starting tokio startup...");
 
     // Setup and execute subsystem tree
     tokio_graceful_shutdown::Toplevel::new(|s| async move {
         s.start(tokio_graceful_shutdown::SubsystemBuilder::new(
-            "Subsys1", discordbot,
+            "DiscordBot", discordbot,
+        ));
+        s.start(tokio_graceful_shutdown::SubsystemBuilder::new(
+            "WebServer", web::start_web_server,
         ));
     })
     .catch_signals()

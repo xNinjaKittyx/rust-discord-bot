@@ -23,3 +23,15 @@ pub static SONARR_URL: LazyLock<String> = LazyLock::new(|| std::env::var("SONARR
 
 pub static SONARR_API_KEY: LazyLock<String> =
     LazyLock::new(|| std::env::var("SONARR_API_KEY").unwrap());
+
+pub static OPENWEATHERMAP_API_KEY: LazyLock<String> =
+    LazyLock::new(|| std::env::var("OPENWEATHERMAP_API_KEY").unwrap());
+
+pub static KICK_CLIENT_ID: LazyLock<String> =
+    LazyLock::new(|| std::env::var("KICK_CLIENT_ID").unwrap());
+
+pub static KICK_CLIENT_SECRET: LazyLock<String> =
+    LazyLock::new(|| std::env::var("KICK_CLIENT_SECRET").unwrap());
+
+pub static TMDB_API_KEY: LazyLock<String> =
+    LazyLock::new(|| std::env::var("TMDB_API_KEY").unwrap());

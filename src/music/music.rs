@@ -14,7 +14,8 @@ use poise::serenity_prelude as serenity;
     prefix_command,
     slash_command,
     subcommands("join", "leave", "queue"),
-    subcommand_required
+    subcommand_required,
+    category = "Music"
 )]
 pub async fn music(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
@@ -133,7 +134,7 @@ impl VoiceEventHandler for TrackStartNotifier {
     }
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Music")]
 pub async fn join(ctx: Context<'_>) -> Result<(), Error> {
     let (guild_id, channel_id) = {
         let guild = ctx.guild().unwrap();
@@ -179,7 +180,7 @@ pub async fn join(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Music")]
 pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild().unwrap().id;
 
@@ -215,7 +216,7 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Music")]
 pub async fn queue(ctx: Context<'_>, url: String) -> Result<(), Error> {
     let do_search = !url.starts_with("http");
     let http_client = HTTP_CLIENT.get().unwrap();

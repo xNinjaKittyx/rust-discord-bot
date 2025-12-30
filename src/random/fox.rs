@@ -3,7 +3,7 @@ use crate::{Context, Error, HTTP_CLIENT};
 
 use poise::serenity_prelude as serenity;
 
-#[poise::command(prefix_command, slash_command)]
+#[poise::command(prefix_command, slash_command, category = "Random")]
 pub async fn fox(ctx: Context<'_>) -> Result<(), Error> {
     let resp = HTTP_CLIENT
         .get()
