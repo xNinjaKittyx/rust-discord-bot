@@ -16,7 +16,7 @@ poise = "0.6.1"
 redb = "2.5.0"
 regex = "1.11.1"
 reqwest = { version = "0.12.22", features = ["json"] }
-rust_cast = "0.19.0"
+rust_cast = "0.21.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.141"
 strsim = "0.11.1"
