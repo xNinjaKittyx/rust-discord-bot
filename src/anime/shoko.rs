@@ -554,12 +554,13 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
 
     // Convert AniDB ID to AniListID
     let mut group_list = "No releases found".to_string();
+    let mut comparisons = "No comparisons found".to_string();
     if alid != 0 {
         let resp = HTTP_CLIENT
             .get()
             .unwrap()
             .get(format!(
-                "https://releases.moe/api/collections/entries/records?filter=alID={}&expand=trs&filter=trs.tracker=%27Nyaa%27&fields=expand.trs.releaseGroup",
+                "https://releases.moe/api/collections/entries/records?filter=alID={}&expand=trs&filter=trs.tracker=%27Nyaa%27",
                 &alid,
             ))
             .send()
@@ -568,27 +569,46 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
         log::info!("Releases.moe returned {}", text.as_str());
 
         // Extract unique release group names
-        let mut release_groups = HashSet::new();
+        let mut release_groups = String::new();
+        let mut comps = String::new();
         let json: serde_json::Value = serde_json::from_str(&text)?;
         if let Some(items) = json.get("items").and_then(|v| v.as_array()) {
-            for item in items {
-                if let Some(trs) = item
-                    .get("expand")
-                    .and_then(|expand| expand.get("trs"))
-                    .and_then(|trs| trs.as_array())
-                {
-                    for tr in trs {
-                        if let Some(group) = tr.get("releaseGroup").and_then(|g| g.as_str()) {
-                            release_groups.insert(group.to_string());
+
+            // There should only be 1 item.
+            let item = items.first().unwrap();
+
+            // Grab "comparison" and split by string and enumerate
+            item.get("comparison").and_then(|c| c.as_str()).unwrap().split(',').enumerate().for_each(|(i, comp)| {
+                comps.push_str(format!("[{}]({}) ", i + 1, comp).as_str());
+            });
+
+            if let Some(trs) = item
+                .get("expand")
+                .and_then(|expand| expand.get("trs"))
+                .and_then(|trs| trs.as_array())
+            {
+                for tr in trs {
+                    // Check if tracker value is == "Nyaa"
+                    if let Some(tracker) = tr.get("tracker").and_then(|t| t.as_str()) {
+                        if tracker != "Nyaa" {
+                            continue;
                         }
+                    }
+                    if let Some(group) = tr.get("releaseGroup").and_then(|g| g.as_str()) {
+                        release_groups.push_str(format!("[{}]({})\n", group, tr.get("url").and_then(|u| u.as_str()).unwrap_or("")).as_str());
                     }
                 }
             }
         }
-        // Join the set into a comma-separated string
-        group_list = release_groups.into_iter().collect::<Vec<_>>().join(", ");
-        if group_list.is_empty() {
-            group_list = "No Good Release Available".to_string();
+
+        // If we found any release groups, use them
+        if !release_groups.is_empty() {
+            group_list = release_groups;
+        }
+
+        // If we found any release groups, use them
+        if !comps.is_empty() {
+            comparisons = comps;
         }
     }
 
@@ -630,7 +650,7 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
                 ),
                 (
                     "Releases.moe",
-                    format!("[{}](https://releases.moe/{})", group_list, alid),
+                    format!("[releases.moe](https://releases.moe/{})\n {}", alid, group_list),
                     true,
                 ),
                 (
@@ -646,6 +666,11 @@ pub async fn search(ctx: Context<'_>, value: String) -> Result<(), Error> {
                 (
                     "File Sources",
                     file_sources_text,
+                    false,
+                ),
+                (
+                    "Comparisons",
+                    comparisons,
                     false,
                 )
             ])

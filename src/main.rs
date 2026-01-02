@@ -18,6 +18,7 @@ use miette::Result;
 use poise::serenity_prelude as serenity;
 use simplelog::{ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, WriteLogger};
 use songbird::SerenityInit;
+use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle, Toplevel};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -119,7 +120,7 @@ async fn event_handler(
     Ok(())
 }
 
-async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<()> {
+async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Result<()> {
     log::info!("Initializing clients and databases...");
 
     KV_DATABASE.get_or_init(|| redb::Database::create("storage.db").unwrap());
@@ -154,7 +155,7 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
                 random::fox::fox(),
                 random::weather::weather(),
                 language::kanji::kanji(),
-                music::music::music(),
+                music::play::music(),
                 music::musicclip::yt_edit(),
                 streams::follow(),
                 streams::unfollow(),
@@ -270,7 +271,7 @@ async fn discordbot(subsys: tokio_graceful_shutdown::SubsystemHandle) -> Result<
                         poise::Context::Prefix(pctx) => pctx.msg.content.clone(),
                         poise::Context::Application(actx) => {
                             // For slash commands, reconstruct from command name and options
-                            let mut invocation = format!("{}", &command_name);
+                            let mut invocation = format!("/{}", &command_name);
                             let options = &actx.interaction.data.options;
                             if !options.is_empty() {
                                 for option in options {
@@ -473,11 +474,11 @@ async fn main() -> Result<()> {
     log::info!("Starting tokio startup...");
 
     // Setup and execute subsystem tree
-    tokio_graceful_shutdown::Toplevel::new(|s| async move {
-        s.start(tokio_graceful_shutdown::SubsystemBuilder::new(
+    Toplevel::new(async |s: &mut SubsystemHandle | {
+        s.start(SubsystemBuilder::new(
             "DiscordBot", discordbot,
         ));
-        s.start(tokio_graceful_shutdown::SubsystemBuilder::new(
+        s.start(SubsystemBuilder::new(
             "WebServer", web::start_web_server,
         ));
     })

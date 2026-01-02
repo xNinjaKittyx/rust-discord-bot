@@ -57,7 +57,7 @@ impl VoiceEventHandler for TrackStartNotifier {
         let volume_down_id = format!("{}voldown", ctx_id);
         let volume_up_id = format!("{}volup", ctx_id);
 
-        if let EventContext::Track(&[(state, track)]) = ctx {
+        if let EventContext::Track([(state, track)]) = ctx {
             while state.playing != PlayMode::Play {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }

@@ -1,5 +1,7 @@
 use actix_files::{Files, NamedFile};
 use actix_web::{delete, get, post, put, web, App, HttpResponse, HttpServer, Responder, Result as ActixResult};
+
+use miette::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -50,7 +52,7 @@ async fn stats() -> impl Responder {
             Ok(table) => {
                 let now = chrono::Utc::now();
                 let cutoff = now - chrono::Duration::hours(24);
-                
+
                 table.range::<&str>(..)
                     .unwrap()
                     .filter_map(|item| {
@@ -248,7 +250,7 @@ async fn create_tag(tag: web::Json<TagRequest>) -> impl Responder {
                     }))
                 }
             }
-            
+
             match tx.commit() {
                 Ok(_) => HttpResponse::Ok().json(serde_json::json!({
                     "success": true,
@@ -295,7 +297,7 @@ async fn update_tag(key: web::Path<String>, tag: web::Json<TagRequest>) -> impl 
                     }))
                 }
             }
-            
+
             match tx.commit() {
                 Ok(_) => HttpResponse::Ok().json(serde_json::json!({
                     "success": true,
@@ -338,7 +340,7 @@ async fn delete_tag(key: web::Path<String>) -> impl Responder {
                     }))
                 }
             }
-            
+
             match tx.commit() {
                 Ok(_) => HttpResponse::Ok().json(serde_json::json!({
                     "success": true,
@@ -359,7 +361,7 @@ async fn spa_fallback() -> ActixResult<NamedFile> {
     Ok(NamedFile::open(PathBuf::from("./static/index.html"))?)
 }
 
-pub async fn start_web_server(subsys: tokio_graceful_shutdown::SubsystemHandle) -> miette::Result<()> {
+pub async fn start_web_server(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Result<()> {
     log::info!("Starting web server...");
 
     let server = HttpServer::new(|| {
