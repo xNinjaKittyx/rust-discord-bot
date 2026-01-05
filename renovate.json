@@ -1,0 +1,16 @@
+{
+  "packageRules": [
+    {
+      "groupName": "npm Minor & Patch",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "labels": ["npm", "dependencies"]
+    },
+    {
+      "groupName": "Rust Minor & Patch",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "labels": ["rust", "dependencies"]
+    }
+  ]
+}
