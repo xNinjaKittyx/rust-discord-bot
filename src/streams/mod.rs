@@ -1,5 +1,6 @@
 use crate::{Context, Error, HTTP_CLIENT, KV_DATABASE, STREAMS};
 use poise::serenity_prelude as serenity;
+use redb::ReadableDatabase;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};

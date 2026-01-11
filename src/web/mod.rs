@@ -2,6 +2,7 @@ use actix_files::{Files, NamedFile};
 use actix_web::{delete, get, post, put, web, App, HttpResponse, HttpServer, Responder, Result as ActixResult};
 
 use miette::Result;
+use redb::ReadableDatabase;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;

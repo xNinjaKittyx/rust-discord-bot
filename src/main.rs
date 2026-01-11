@@ -123,19 +123,22 @@ async fn event_handler(
 async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Result<()> {
     log::info!("Initializing clients and databases...");
 
-    KV_DATABASE.get_or_init(|| redb::Database::create("storage.db").unwrap());
-
-    // Make sure tables exist
-    let db = KV_DATABASE.get().unwrap();
-    {
-        let tx = db.begin_write().unwrap();
-        tx.open_table(TABLE).unwrap();
-        tx.open_table(AI_CONTEXT).unwrap();
-        tx.open_table(STREAMS).unwrap();
-        tx.open_table(PERMISSIONS).unwrap();
-        tx.open_table(HISTORY).unwrap();
-        tx.commit().unwrap();
-    }
+    KV_DATABASE.get_or_init(|| {
+        let mut db = redb::Database::create("storage.db").unwrap();
+        
+        // Make sure tables exist
+        {
+            let tx = db.begin_write().unwrap();
+            tx.open_table(TABLE).unwrap();
+            tx.open_table(AI_CONTEXT).unwrap();
+            tx.open_table(STREAMS).unwrap();
+            tx.open_table(PERMISSIONS).unwrap();
+            tx.open_table(HISTORY).unwrap();
+            tx.commit().unwrap();
+        }
+        db.compact().unwrap();
+        db
+    });
 
     HTTP_CLIENT.get_or_init(|| reqwest::Client::new());
     REACTION_CONFIG.get_or_init(|| random::response::load_config().unwrap());
@@ -448,6 +451,11 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize rustls crypto provider before any async operations
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let config = ConfigBuilder::new()
         .add_filter_ignore_str("tracing")
         .add_filter_ignore_str("serenity")

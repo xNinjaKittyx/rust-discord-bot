@@ -1,5 +1,6 @@
 use crate::{Context, Error, KV_DATABASE, PERMISSIONS};
 use poise::serenity_prelude as serenity;
+use redb::ReadableDatabase;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

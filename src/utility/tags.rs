@@ -2,7 +2,7 @@ use crate::env::FOOTER_URL;
 use crate::{Context, Error, KV_DATABASE, TABLE};
 
 use poise::serenity_prelude as serenity;
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 
 #[poise::command(
     prefix_command,
