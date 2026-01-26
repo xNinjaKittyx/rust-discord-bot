@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::{Context, Error, HTTP_CLIENT};
 use poise::serenity_prelude as serenity;
 use serde::Deserialize;
@@ -21,7 +22,12 @@ struct MovieResult {
     popularity: f64,
 }
 
-#[poise::command(prefix_command, slash_command, aliases("movies"), category = "Entertainment")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    aliases("movies"),
+    category = "Entertainment"
+)]
 pub async fn movie(
     ctx: Context<'_>,
     #[description = "Movie title to search for"] query: String,
@@ -63,7 +69,7 @@ pub async fn movie(
     let mut embed = serenity::CreateEmbed::new()
         .title(&movie.title)
         .url(format!("https://www.themoviedb.org/movie/{}", movie.id))
-        .color(0x01b4e4);
+        .color(colors::ACCENT);
 
     if let Some(ref overview) = movie.overview {
         embed = embed.description(overview);
@@ -84,8 +90,7 @@ pub async fn movie(
         embed = embed.field("Original Title", &movie.original_title, false);
     }
 
-    ctx.send(poise::CreateReply::default().embed(embed))
-        .await?;
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
     Ok(())
 }

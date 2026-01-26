@@ -1,13 +1,13 @@
-
 use poise::serenity_prelude as serenity;
 use url::Url;
-
 
 pub async fn check_reddit_embed(
     ctx: &serenity::Context,
     message: &serenity::Message,
 ) -> Result<(), serenity::Error> {
-    let url_start = message.content.find("https://www.reddit.com/")
+    let url_start = message
+        .content
+        .find("https://www.reddit.com/")
         .or_else(|| message.content.find("https://old.reddit.com/"))
         .or_else(|| message.content.find("https://reddit.com/"));
 
@@ -20,9 +20,15 @@ pub async fn check_reddit_embed(
             let path = parsed_url.path();
             let fixed_url = format!("https://rxddit.com{}", path);
 
-            message.reply(
-                ctx, format!("Detected a Reddit link, here's a fixed embed: {}", fixed_url)
-            ).await?;
+            message
+                .reply(
+                    ctx,
+                    format!(
+                        "Detected a Reddit link, here's a fixed embed: {}",
+                        fixed_url
+                    ),
+                )
+                .await?;
         }
     }
     Ok(())

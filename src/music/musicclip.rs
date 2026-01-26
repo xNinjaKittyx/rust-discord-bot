@@ -1,14 +1,12 @@
 use std::path::PathBuf;
 
-use crate::{Context, Error};
+use crate::{Context, Error, colors};
 
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::CreateAttachment;
 use uuid::Uuid;
 use yt_dlp::Youtube;
 use yt_dlp::client::deps::Libraries;
-
-
 
 async fn edit_audio_clip(
     input_path: &std::path::Path,
@@ -20,7 +18,7 @@ async fn edit_audio_clip(
     let duration_str = format!("{}", duration);
 
     let status = tokio::process::Command::new("ffmpeg")
-        .args(&[
+        .args([
             "-ss",
             &start_time_str,
             "-t",
@@ -41,7 +39,6 @@ async fn edit_audio_clip(
 
     Ok(())
 }
-
 
 #[poise::command(prefix_command, slash_command, category = "Music")]
 pub async fn yt_edit(
@@ -80,7 +77,9 @@ pub async fn yt_edit(
 
     log::info!("Downloading audio to temporary file: {}", audio_filename);
 
-    let audio_path: PathBuf = fetcher.download_format(&audio_format, &audio_filename).await?;
+    let audio_path: PathBuf = fetcher
+        .download_format(audio_format, &audio_filename)
+        .await?;
 
     let clip_path = output_dir.join(&clip_filename);
     log::info!("Editing audio clip to file: {}", clip_path.display());
@@ -88,35 +87,35 @@ pub async fn yt_edit(
 
     let reply = {
         let embed = serenity::CreateEmbed::new()
-            .title(format!("{}", video.title))
+            .title(video.title.to_string())
             .description(format!(
                 "Here is your audio clip from {} (start: {}s, duration: {}s)",
                 video.title, start_time, duration
             ))
             .fields(vec![
-                (
-                    "Original Video",
-                    format!("[Link]({})", url),
-                    false,
-                ),
+                ("Original Video", format!("[Link]({})", url), false),
                 ("Duration", format!("{} seconds", duration), true),
                 ("Views", format!("{}", video.view_count), true),
                 ("Likes", format!("{}", video.like_count.unwrap_or(0)), true),
-                ("Comments", format!("{}", video.comment_count.unwrap_or(0)), true),
+                (
+                    "Comments",
+                    format!("{}", video.comment_count.unwrap_or(0)),
+                    true,
+                ),
             ])
             .url(url)
             .thumbnail(video.thumbnail)
-            .footer(
-                serenity::CreateEmbedFooter::new(format!("Requested by {}", ctx.author().name))
-            );
+            .color(colors::PINK)
+            .footer(serenity::CreateEmbedFooter::new(format!(
+                "Requested by {}",
+                ctx.author().name
+            )));
 
         poise::CreateReply::default().embed(embed)
     };
     // Reply with the audio clip attached
-    ctx.send(
-        reply.attachment(CreateAttachment::path(&clip_path).await?)
-    )
-    .await?;
+    ctx.send(reply.attachment(CreateAttachment::path(&clip_path).await?))
+        .await?;
 
     Ok(())
 }

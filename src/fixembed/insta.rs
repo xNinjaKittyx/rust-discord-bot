@@ -1,4 +1,3 @@
-
 use poise::serenity_prelude as serenity;
 use url::Url;
 
@@ -17,9 +16,15 @@ pub async fn check_instagram_embed(
             let path = parsed_url.path();
             let fixed_url = format!("https://d.vxinstagram.com{}", path);
 
-            message.reply(
-                ctx, format!("Detected an Instagram link, here's a fixed embed: {}", fixed_url)
-            ).await?;
+            message
+                .reply(
+                    ctx,
+                    format!(
+                        "Detected an Instagram link, here's a fixed embed: {}",
+                        fixed_url
+                    ),
+                )
+                .await?;
         }
     }
     Ok(())

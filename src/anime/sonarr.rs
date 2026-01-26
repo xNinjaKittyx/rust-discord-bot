@@ -1,6 +1,6 @@
 use crate::anime::sonarr_serde;
 use crate::env::{FOOTER_URL, SONARR_API_KEY, SONARR_URL};
-use crate::{Context, Error, HTTP_CLIENT};
+use crate::{Context, Error, HTTP_CLIENT, colors};
 
 use chrono_tz::America::Los_Angeles;
 
@@ -176,12 +176,11 @@ async fn parse_shows() -> Result<Vec<sonarr_serde::Show>, serde_json::Error> {
 
 async fn parse_history(daily: bool) -> Result<Vec<sonarr_serde::History>, serde_json::Error> {
     let today = chrono::Utc::now();
-    let yesterday;
-    if daily {
-        yesterday = today - chrono::Duration::days(1);
+    let yesterday = if daily {
+        today - chrono::Duration::days(1)
     } else {
-        yesterday = today - chrono::Duration::days(7);
-    }
+        today - chrono::Duration::days(7)
+    };
     let request_uri = format!(
         "history/since?date={}T00:00:00Z&eventType=grabbed",
         yesterday.format("%Y-%m-%d")
@@ -259,17 +258,18 @@ pub async fn showall(ctx: Context<'_>) -> Result<(), Error> {
                     ),
                     true,
                 ),
-                ("Status", format!("{}", show.status), true),
+                ("Status", show.status.to_string(), true),
                 ("Episode Length", show.runtime.to_string(), false),
                 ("Year", show.year.to_string(), false),
                 (
                     "Release Groups",
-                    format!("{}", show.statistics.release_groups.join(", ")),
+                    show.statistics.release_groups.join(", ").to_string(),
                     false,
                 ),
             ])
             .thumbnail(&show.images[1].remote_url)
             .image(&show.images[0].remote_url)
+            .color(colors::SKY)
             .footer(footer.clone())
             // Add a timestamp for the current time
             // This also accepts a rfc3339 Timestamp

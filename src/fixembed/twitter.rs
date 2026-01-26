@@ -1,14 +1,13 @@
-
 use poise::serenity_prelude as serenity;
 use url::Url;
-
 
 pub async fn check_twitter_embed(
     ctx: &serenity::Context,
     message: &serenity::Message,
 ) -> Result<(), serenity::Error> {
-
-    let url_start = message.content.find("https://twitter.com/")
+    let url_start = message
+        .content
+        .find("https://twitter.com/")
         .or_else(|| message.content.find("https://x.com/"));
 
     if let Some(start) = url_start {
@@ -20,9 +19,15 @@ pub async fn check_twitter_embed(
             let path = parsed_url.path();
             let fixed_url = format!("https://fixupx.com{}", path);
 
-            message.reply(
-                ctx, format!("Detected a Twitter/X link, here's a fixed embed: {}", fixed_url)
-            ).await?;
+            message
+                .reply(
+                    ctx,
+                    format!(
+                        "Detected a Twitter/X link, here's a fixed embed: {}",
+                        fixed_url
+                    ),
+                )
+                .await?;
         }
     }
     Ok(())

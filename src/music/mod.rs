@@ -1,2 +1,2 @@
-pub mod play;
 pub mod musicclip;
+pub mod play;

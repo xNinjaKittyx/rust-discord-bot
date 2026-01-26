@@ -1,5 +1,5 @@
 use crate::env::FOOTER_URL;
-use crate::{Context, Error, HTTP_CLIENT};
+use crate::{Context, Error, HTTP_CLIENT, colors};
 
 use poise::serenity_prelude as serenity;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ pub async fn kanji(
     let reply = {
         let embed = serenity::CreateEmbed::new()
             .title(&result.kanji)
-            .description(&result.meanings.join(", "))
+            .description(result.meanings.join(", "))
             .fields(vec![
                 ("School Grade", result.grade.to_string(), true),
                 ("JLPT", result.jlpt.unwrap_or(0).to_string(), true),
@@ -50,6 +50,7 @@ pub async fn kanji(
                 ),
             ])
             .footer(footer)
+            .color(colors::LAVENDER)
             // Add a timestamp for the current time
             // This also accepts a rfc3339 Timestamp
             .timestamp(serenity::model::Timestamp::now());

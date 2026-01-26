@@ -1,11 +1,10 @@
-use crate::{Context, Error, HTTP_CLIENT, KV_DATABASE, STREAMS};
+use crate::colors;
+use crate::{Context, Error, HTTP_CLIENT, KV_DATABASE, LIVE_STREAMS_STATE, STREAMS};
 use poise::serenity_prelude as serenity;
 use redb::ReadableDatabase;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
+use std::sync::Arc;
+use tokio::time::{Duration, interval};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StreamFollow {
@@ -54,25 +53,31 @@ struct KickCategory {
     thumbnail: Option<String>,
 }
 
-// Track which streams are currently live with their message IDs and start times
-// Format: HashMap<stream_key, (message_id, start_time)>
-static LIVE_STREAMS: LazyLock<Arc<Mutex<HashMap<String, (u64, String)>>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+#[derive(Debug, Serialize, Deserialize)]
+struct LiveStreamState {
+    message_id: u64,
+    start_time: String,
+}
 
 fn parse_kick_url(url: &str) -> Option<String> {
     // Parse kick.com URLs like https://kick.com/channelname
-    if url.contains("kick.com/") {
-        if let Some(channel) = url.split("kick.com/").nth(1) {
-            let channel_name = channel.trim_end_matches('/').to_string();
-            if !channel_name.is_empty() {
-                return Some(channel_name);
-            }
+    if url.contains("kick.com/")
+        && let Some(channel) = url.split("kick.com/").nth(1)
+    {
+        let channel_name = channel.trim_end_matches('/').to_string();
+        if !channel_name.is_empty() {
+            return Some(channel_name);
         }
     }
     None
 }
 
-#[poise::command(prefix_command, slash_command, check = "crate::permissions::check_trusted", category = "Streams")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    check = "crate::permissions::check_trusted",
+    category = "Streams"
+)]
 pub async fn follow(
     ctx: Context<'_>,
     #[description = "Stream URL to follow"] url: String,
@@ -81,7 +86,8 @@ pub async fn follow(
     let (platform, channel_name) = if let Some(channel) = parse_kick_url(&url) {
         ("kick", channel)
     } else {
-        ctx.say("❌ Unsupported URL. Currently only kick.com URLs are supported.").await?;
+        ctx.say("❌ Unsupported URL. Currently only kick.com URLs are supported.")
+            .await?;
         return Ok(());
     };
 
@@ -97,15 +103,9 @@ pub async fn follow(
     };
 
     // Store in database
-    let db = KV_DATABASE.get().unwrap();
-    let tx = db.begin_write()?;
-    {
-        let mut table = tx.open_table(STREAMS)?;
-        let key = format!("{}:{}", platform, channel_name);
-        let value = serde_json::to_string(&follow)?;
-        table.insert(key.as_str(), value.as_str())?;
-    }
-    tx.commit()?;
+    let key = format!("{}:{}", platform, channel_name);
+    let value = serde_json::to_string(&follow)?;
+    crate::db::write_entry(STREAMS, &key, &value)?;
 
     ctx.say(format!(
         "✅ Now following **{}** on {}. Notifications will be posted in <#{}>",
@@ -116,7 +116,12 @@ pub async fn follow(
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command, check = "crate::permissions::check_trusted", category = "Streams")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    check = "crate::permissions::check_trusted",
+    category = "Streams"
+)]
 pub async fn unfollow(
     ctx: Context<'_>,
     #[description = "Stream URL to unfollow"] url: String,
@@ -124,38 +129,28 @@ pub async fn unfollow(
     let (platform, channel_name) = if let Some(channel) = parse_kick_url(&url) {
         ("kick", channel)
     } else {
-        ctx.say("❌ Unsupported URL. Currently only kick.com URLs are supported.").await?;
+        ctx.say("❌ Unsupported URL. Currently only kick.com URLs are supported.")
+            .await?;
         return Ok(());
     };
 
-    let db = KV_DATABASE.get().unwrap();
-    let tx = db.begin_write()?;
-    {
-        let mut table = tx.open_table(STREAMS)?;
-        let key = format!("{}:{}", platform, channel_name);
-        table.remove(key.as_str())?;
-    }
-    tx.commit()?;
+    let key = format!("{}:{}", platform, channel_name);
+    crate::db::delete_entry(STREAMS, &key)?;
 
-    ctx.say(format!("✅ Unfollowed **{}** on {}", channel_name, platform))
-        .await?;
+    ctx.say(format!(
+        "✅ Unfollowed **{}** on {}",
+        channel_name, platform
+    ))
+    .await?;
 
     Ok(())
 }
 
 #[poise::command(prefix_command, slash_command, category = "Streams")]
 pub async fn following(ctx: Context<'_>) -> Result<(), Error> {
-    let db = KV_DATABASE.get().unwrap();
-    let tx = db.begin_read()?;
-    let table = tx.open_table(STREAMS)?;
-
-    let mut follows: Vec<StreamFollow> = Vec::new();
-    for item in table.range::<&str>(..)? {
-        let (_, value) = item?;
-        if let Ok(follow) = serde_json::from_str::<StreamFollow>(value.value()) {
-            follows.push(follow);
-        }
-    }
+    let follows = crate::db::read_table(STREAMS, |_, value| {
+        serde_json::from_str::<StreamFollow>(value).ok()
+    })?;
 
     if follows.is_empty() {
         ctx.say("No streams are currently being followed.").await?;
@@ -188,23 +183,28 @@ pub async fn preview(
                     let stream_url = format!("https://kick.com/{}", channel_name);
                     let embed = create_stream_embed(&channel, &stream_url, stream);
 
-                    ctx.send(
-                        poise::CreateReply::default()
-                            .embed(embed),
-                    )
-                    .await?;
+                    ctx.send(poise::CreateReply::default().embed(embed)).await?;
                 } else {
-                    ctx.say(format!("❌ **{}** is not currently live on Kick.", channel_name))
-                        .await?;
+                    ctx.say(format!(
+                        "❌ **{}** is not currently live on Kick.",
+                        channel_name
+                    ))
+                    .await?;
                 }
             } else {
-                ctx.say(format!("❌ **{}** is not currently live on Kick.", channel_name))
-                    .await?;
+                ctx.say(format!(
+                    "❌ **{}** is not currently live on Kick.",
+                    channel_name
+                ))
+                .await?;
             }
         }
         Ok(None) => {
-            ctx.say(format!("❌ Channel **{}** not found on Kick.", channel_name))
-                .await?;
+            ctx.say(format!(
+                "❌ Channel **{}** not found on Kick.",
+                channel_name
+            ))
+            .await?;
         }
         Err(e) => {
             ctx.say(format!("❌ Error checking stream: {}", e)).await?;
@@ -239,7 +239,10 @@ async fn get_kick_oauth_token() -> Result<String, Error> {
 
 async fn check_kick_stream(channel_name: &str) -> Result<Option<KickChannelData>, Error> {
     let access_token = get_kick_oauth_token().await?;
-    let url = format!("https://api.kick.com/public/v1/channels?slug={}", channel_name);
+    let url = format!(
+        "https://api.kick.com/public/v1/channels?slug={}",
+        channel_name
+    );
 
     log::debug!("Checking Kick channel: {}", url);
 
@@ -268,7 +271,7 @@ fn create_stream_embed(
 ) -> serenity::CreateEmbed {
     let mut embed = serenity::CreateEmbed::new()
         .url(stream_url)
-        .color(0x53fc18)
+        .color(colors::LIVE)
         .timestamp(serenity::Timestamp::now());
 
     // Set title from stream_title
@@ -278,10 +281,10 @@ fn create_stream_embed(
 
     // Set description starting with slug
     let mut description = format!("**{}**", channel.slug);
-    if let Some(ref channel_desc) = channel.channel_description {
-        if !channel_desc.is_empty() {
-            description.push_str(&format!("\n{}", channel_desc));
-        }
+    if let Some(ref channel_desc) = channel.channel_description
+        && !channel_desc.is_empty()
+    {
+        description.push_str(&format!("\n{}", channel_desc));
     }
     embed = embed.description(description);
 
@@ -334,61 +337,105 @@ async fn check_and_notify_streams(http: &serenity::Http) -> Result<(), Error> {
 
                 if is_live {
                     if let Some(ref stream) = channel.stream {
-                        let mut live_streams = LIVE_STREAMS.lock().await;
-
                         let discord_channel = serenity::ChannelId::new(follow.channel_id);
                         let embed = create_stream_embed(&channel, &follow.url, stream);
                         let current_start_time = stream.start_time.clone().unwrap_or_default();
 
+                        // Load existing state from database
+                        let existing_state: Option<LiveStreamState> = {
+                            let tx = db.begin_read()?;
+                            let table = tx.open_table(LIVE_STREAMS_STATE)?;
+                            if let Some(state_str) = table.get(stream_key.as_str())? {
+                                serde_json::from_str(state_str.value()).ok()
+                            } else {
+                                None
+                            }
+                        };
+
                         // Check if we already have a message for this stream
-                        if let Some(&(message_id, ref stored_start_time)) = live_streams.get(&stream_key) {
+                        if let Some(state) = existing_state {
                             // Compare start times to see if it's the same stream session
-                            if current_start_time == *stored_start_time {
+                            if current_start_time == state.start_time {
                                 // Same stream session, edit the existing message
-                                let message = discord_channel.message(http, message_id).await;
+                                let message = discord_channel.message(http, state.message_id).await;
                                 if let Ok(mut msg) = message {
-                                    let edit = serenity::EditMessage::new()
-                                        .embed(embed);
+                                    let edit = serenity::EditMessage::new().embed(embed);
                                     if let Err(e) = msg.edit(http, edit).await {
                                         log::error!("Failed to edit stream notification: {}", e);
                                         // If edit fails, remove the entry and send a new one next time
-                                        live_streams.remove(&stream_key);
+                                        let tx = db.begin_write()?;
+                                        {
+                                            let mut table = tx.open_table(LIVE_STREAMS_STATE)?;
+                                            table.remove(stream_key.as_str())?;
+                                        }
+                                        tx.commit()?;
                                     }
                                 } else {
                                     // Message doesn't exist anymore, remove from tracking and send new one
-                                    live_streams.remove(&stream_key);
+                                    let message = serenity::CreateMessage::new().embed(embed);
 
-                                    let message = serenity::CreateMessage::new()
-                                        .embed(embed);
-
-                                    if let Ok(sent_msg) = discord_channel.send_message(http, message).await {
-                                        live_streams.insert(stream_key.clone(), (sent_msg.id.get(), current_start_time));
+                                    if let Ok(sent_msg) =
+                                        discord_channel.send_message(http, message).await
+                                    {
+                                        let new_state = LiveStreamState {
+                                            message_id: sent_msg.id.get(),
+                                            start_time: current_start_time,
+                                        };
+                                        let tx = db.begin_write()?;
+                                        {
+                                            let mut table = tx.open_table(LIVE_STREAMS_STATE)?;
+                                            let value = serde_json::to_string(&new_state)?;
+                                            table.insert(stream_key.as_str(), value.as_str())?;
+                                        }
+                                        tx.commit()?;
                                     } else {
                                         log::error!("Failed to send stream notification");
                                     }
                                 }
                             } else {
                                 // Different start_time means new stream session, send a new message
-                                log::info!("New stream session detected for {}, creating new notification", follow.channel_name);
-                                live_streams.remove(&stream_key);
+                                log::info!(
+                                    "New stream session detected for {}, creating new notification",
+                                    follow.channel_name
+                                );
 
-                                let message = serenity::CreateMessage::new()
-                                    .embed(embed);
+                                let message = serenity::CreateMessage::new().embed(embed);
 
-                                if let Ok(sent_msg) = discord_channel.send_message(http, message).await {
-                                    live_streams.insert(stream_key.clone(), (sent_msg.id.get(), current_start_time));
+                                if let Ok(sent_msg) =
+                                    discord_channel.send_message(http, message).await
+                                {
+                                    let new_state = LiveStreamState {
+                                        message_id: sent_msg.id.get(),
+                                        start_time: current_start_time,
+                                    };
+                                    let tx = db.begin_write()?;
+                                    {
+                                        let mut table = tx.open_table(LIVE_STREAMS_STATE)?;
+                                        let value = serde_json::to_string(&new_state)?;
+                                        table.insert(stream_key.as_str(), value.as_str())?;
+                                    }
+                                    tx.commit()?;
                                 } else {
                                     log::error!("Failed to send stream notification");
                                 }
                             }
                         } else {
                             // Send a new notification and store the message ID with start_time
-                            let message = serenity::CreateMessage::new()
-                                .embed(embed);
+                            let message = serenity::CreateMessage::new().embed(embed);
 
                             match discord_channel.send_message(http, message).await {
                                 Ok(sent_msg) => {
-                                    live_streams.insert(stream_key.clone(), (sent_msg.id.get(), current_start_time));
+                                    let new_state = LiveStreamState {
+                                        message_id: sent_msg.id.get(),
+                                        start_time: current_start_time,
+                                    };
+                                    let tx = db.begin_write()?;
+                                    {
+                                        let mut table = tx.open_table(LIVE_STREAMS_STATE)?;
+                                        let value = serde_json::to_string(&new_state)?;
+                                        table.insert(stream_key.as_str(), value.as_str())?;
+                                    }
+                                    tx.commit()?;
                                 }
                                 Err(e) => {
                                     log::error!("Failed to send stream notification: {}", e);
@@ -398,8 +445,12 @@ async fn check_and_notify_streams(http: &serenity::Http) -> Result<(), Error> {
                     }
                 } else {
                     // Stream is offline, remove from live set
-                    let mut live_streams = LIVE_STREAMS.lock().await;
-                    live_streams.remove(&stream_key);
+                    let tx = db.begin_write()?;
+                    {
+                        let mut table = tx.open_table(LIVE_STREAMS_STATE)?;
+                        table.remove(stream_key.as_str())?;
+                    }
+                    tx.commit()?;
                 }
             }
             Ok(None) => {

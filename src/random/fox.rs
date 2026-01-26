@@ -1,5 +1,5 @@
 use crate::env::FOOTER_URL;
-use crate::{Context, Error, HTTP_CLIENT};
+use crate::{Context, Error, HTTP_CLIENT, colors};
 
 use poise::serenity_prelude as serenity;
 
@@ -21,6 +21,7 @@ pub async fn fox(ctx: Context<'_>) -> Result<(), Error> {
             .description("xdd")
             .image(image_url) // Use the correct image URL
             .footer(footer)
+            .color(colors::PEACH)
             // Add a timestamp for the current time
             // This also accepts a rfc3339 Timestamp
             .timestamp(serenity::model::Timestamp::now());

@@ -1,7 +1,18 @@
 
 repos:
-- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-  rev: v2.13.0
-  hooks:
-  - id: pretty-format-rust
-    args: [--autofix]
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.13.0
+    hooks:
+    - id: pretty-format-rust
+      args: [--autofix]
+
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+    - id: cargo-check
+      args: ["--workspace"]
+    - id: fmt
+      args: ["--", "--check"]
+    - id: clippy
+      args: []
+      # args: ["--", "-D", "warnings"]

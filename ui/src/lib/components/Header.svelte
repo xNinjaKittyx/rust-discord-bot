@@ -6,7 +6,9 @@
 		{ name: 'Commands', href: '/commands' },
 		{ name: 'Emojis', href: '/emojis' },
 		{ name: 'Tags', href: '/tags' },
-		{ name: 'History', href: '/history' }
+		{ name: 'Tickets', href: '/tickets' },
+		{ name: 'History', href: '/history' },
+		{ name: 'AYDY', href: '/aydy' }
 	];
 </script>
 

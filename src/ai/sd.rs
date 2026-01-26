@@ -28,7 +28,12 @@ fn stablediffusion_help() -> String {
     String::from("Generate an image with Dreamshaper")
 }
 
-#[poise::command(prefix_command, slash_command, help_text_fn = "stablediffusion_help", category = "AI")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    help_text_fn = "stablediffusion_help",
+    category = "AI"
+)]
 pub async fn stablediffusion(
     ctx: Context<'_>,
     #[description = "Use a | to split between positive and negative attributes in your prompt."]

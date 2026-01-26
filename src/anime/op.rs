@@ -1,5 +1,5 @@
 use crate::env::FOOTER_URL;
-use crate::{Context, Error, HTTP_CLIENT};
+use crate::{Context, Error, HTTP_CLIENT, colors};
 
 use poise::serenity_prelude as serenity;
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,7 @@ pub async fn guess(ctx: Context<'_>) -> Result<(), Error> {
             let embed = serenity::CreateEmbed::new()
                 .description("Guess the OP! Easy Mode - Playing through the whole song. You have 2 minutes to guess!")
                 .footer(footer.clone())
+                .color(colors::GREEN)
                 .timestamp(serenity::model::Timestamp::now());
             poise::CreateReply::default().embed(embed)
         };
@@ -76,7 +77,7 @@ pub async fn guess(ctx: Context<'_>) -> Result<(), Error> {
             .await
         {
             let winkler_score = jaro_winkler(&msg.content, result.name.as_str()) as f64;
-            log::info!("Winkler Score for {} is {}", msg.content, winkler_score);
+            log::info!("Winkler Score for {} ﻿is {}", msg.content, winkler_score);
             if msg.content == result.name || winkler_score > 0.85 {
                 msg.reply(
                     ctx,
@@ -92,6 +93,7 @@ pub async fn guess(ctx: Context<'_>) -> Result<(), Error> {
             let embed = serenity::CreateEmbed::new()
                 .description("I'm not in a channel.")
                 .footer(footer)
+                .color(colors::CRUST)
                 .timestamp(serenity::model::Timestamp::now());
             poise::CreateReply::default().embed(embed)
         };

@@ -1,5 +1,8 @@
 mod ai;
 mod anime;
+mod colors;
+mod config;
+mod db;
 mod env;
 mod fixembed;
 mod language;
@@ -7,6 +10,7 @@ mod music;
 mod permissions;
 mod random;
 mod streams;
+mod tickets;
 mod tmdb;
 mod utility;
 mod web;
@@ -16,7 +20,9 @@ use std::time::Instant;
 
 use miette::Result;
 use poise::serenity_prelude as serenity;
-use simplelog::{ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, WriteLogger};
+use simplelog::{
+    ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, WriteLogger,
+};
 use songbird::SerenityInit;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle, Toplevel};
 
@@ -28,16 +34,24 @@ pub struct Data {}
 
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static KV_DATABASE: OnceLock<redb::Database> = OnceLock::new();
-static REACTION_CONFIG: OnceLock<random::response::Config> = OnceLock::new();
+static REACTION_CONFIG: OnceLock<config::Config> = OnceLock::new();
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 static COMMANDS_LIST: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
 static EMOJIS_LIST: OnceLock<Vec<serde_json::Value>> = OnceLock::new();
+static DISCORD_HTTP: OnceLock<std::sync::Arc<serenity::Http>> = OnceLock::new();
 
 const TABLE: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("tags");
 const AI_CONTEXT: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("context");
 const STREAMS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("streams");
+const LIVE_STREAMS_STATE: redb::TableDefinition<&str, &str> =
+    redb::TableDefinition::new("live_streams_state");
 const PERMISSIONS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("permissions");
 const HISTORY: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("history");
+const AYDY: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("aydy");
+const PAPERS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("papers");
+const TICKETS: redb::TableDefinition<&str, &str> = redb::TableDefinition::new("tickets");
+const ACTIVE_TICKETS: redb::TableDefinition<&str, &str> =
+    redb::TableDefinition::new("active_tickets");
 
 fn split_string_chunks(long_string: &str, chunk_size: usize) -> Vec<String> {
     long_string
@@ -57,7 +71,7 @@ async fn event_handler(
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
-            START_TIME.get_or_init(|| Instant::now());
+            START_TIME.get_or_init(Instant::now);
             log::info!("Logged in as {}", data_about_bot.user.name);
 
             // Collect emojis from all guilds
@@ -76,7 +90,11 @@ async fn event_handler(
                     }
                 }
             }
-            log::info!("Collected {} emojis from {} guilds", emojis.len(), ctx.cache.guilds().len());
+            log::info!(
+                "Collected {} emojis from {} guilds",
+                emojis.len(),
+                ctx.cache.guilds().len()
+            );
             let _ = EMOJIS_LIST.set(emojis);
         }
         serenity::FullEvent::Message { new_message } => 'message_match: {
@@ -90,18 +108,27 @@ async fn event_handler(
                 {
                     ai::localai::wipe_context(new_message).await?;
                     new_message
-                        .reply(ctx, format!("Wiped all context."))
+                        .reply(ctx, "Wiped all context.".to_string())
                         .await?;
                 } else {
                     let start = Instant::now();
                     let typing = ctx.http.start_typing(new_message.channel_id);
-                    let response = ai::localai::get_gpt_response(new_message, &ctx).await?;
+
+                    let config = REACTION_CONFIG.get().unwrap();
+                    let system_prompt = config
+                        .ai
+                        .as_ref()
+                        .map(|ai| ai.system_prompt.as_str())
+                        .unwrap_or("You are a helpful AI assistant.");
+
+                    let response =
+                        ai::localai::get_gpt_response(new_message, ctx, system_prompt).await?;
 
                     log::info!("Response: {:#?}", response);
                     let chunks = split_string_chunks(&response, 2000);
                     log::info!("Chunks: {:#?}", chunks);
                     for chunk in chunks.iter() {
-                        new_message.reply(ctx, format!("{}", chunk)).await?;
+                        new_message.reply(ctx, chunk.to_string()).await?;
                     }
 
                     typing.stop();
@@ -115,6 +142,80 @@ async fn event_handler(
 
             fixembed::process_fix_embed(ctx, new_message).await?;
         }
+        serenity::FullEvent::InteractionCreate { interaction } => {
+            if let serenity::Interaction::Component(component_interaction) = interaction {
+                if component_interaction.data.custom_id == "aydy_check" {
+                    log::info!(
+                        "{:?} clicked the AYDY check button",
+                        component_interaction.user
+                    );
+                    if let Err(e) =
+                        random::deadge::handle_aydy_button(ctx, component_interaction).await
+                    {
+                        log::error!("Error handling AYDY button: {:?}", e);
+                    }
+                } else if component_interaction
+                    .data
+                    .custom_id
+                    .starts_with("papers_role_")
+                {
+                    log::info!(
+                        "{:?} clicked a papers role button",
+                        component_interaction.user
+                    );
+                    if let Err(e) =
+                        utility::papers::handle_papers_button(ctx, component_interaction).await
+                    {
+                        log::error!("Error handling papers button: {:?}", e);
+                    }
+                } else if component_interaction
+                    .data
+                    .custom_id
+                    .starts_with("ticket_create_")
+                {
+                    log::info!(
+                        "{:?} clicked a ticket creation button",
+                        component_interaction.user
+                    );
+                    if let Err(e) = tickets::handle_ticket_button(ctx, component_interaction).await
+                    {
+                        log::error!("Error handling ticket button: {:?}", e);
+                    }
+                } else if component_interaction
+                    .data
+                    .custom_id
+                    .starts_with("ticket_delete_")
+                    || component_interaction
+                        .data
+                        .custom_id
+                        .starts_with("ticket_close_confirm_")
+                    || component_interaction
+                        .data
+                        .custom_id
+                        .starts_with("ticket_close_cancel_")
+                {
+                    log::info!(
+                        "{:?} clicked a ticket management button",
+                        component_interaction.user
+                    );
+                    if let Err(e) =
+                        tickets::handle_ticket_delete_button(ctx, component_interaction).await
+                    {
+                        log::error!("Error handling ticket management button: {:?}", e);
+                    }
+                }
+            } else if let serenity::Interaction::Modal(modal_interaction) = interaction
+                && modal_interaction
+                    .data
+                    .custom_id
+                    .starts_with("ticket_modal_")
+            {
+                log::info!("{:?} submitted a ticket modal", modal_interaction.user);
+                if let Err(e) = tickets::handle_ticket_modal(ctx, modal_interaction).await {
+                    log::error!("Error handling ticket modal: {:?}", e);
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -125,7 +226,7 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
 
     KV_DATABASE.get_or_init(|| {
         let mut db = redb::Database::create("storage.db").unwrap();
-        
+
         // Make sure tables exist
         {
             let tx = db.begin_write().unwrap();
@@ -134,14 +235,19 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
             tx.open_table(STREAMS).unwrap();
             tx.open_table(PERMISSIONS).unwrap();
             tx.open_table(HISTORY).unwrap();
+            tx.open_table(AYDY).unwrap();
+            tx.open_table(LIVE_STREAMS_STATE).unwrap();
+            tx.open_table(PAPERS).unwrap();
+            tx.open_table(TICKETS).unwrap();
+            tx.open_table(ACTIVE_TICKETS).unwrap();
             tx.commit().unwrap();
         }
         db.compact().unwrap();
         db
     });
 
-    HTTP_CLIENT.get_or_init(|| reqwest::Client::new());
-    REACTION_CONFIG.get_or_init(|| random::response::load_config().unwrap());
+    HTTP_CLIENT.get_or_init(reqwest::Client::new);
+    REACTION_CONFIG.get_or_init(|| config::load_config().unwrap());
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -155,8 +261,12 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                 random::basic::ping(),
                 random::basic::help(),
                 random::basic::uptime(),
+                random::basic::userinfo(),
+                random::basic::guildinfo(),
+                random::deadge::aydy(),
                 random::fox::fox(),
                 random::weather::weather(),
+                language::chinese::hanzi(),
                 language::kanji::kanji(),
                 music::play::music(),
                 music::musicclip::yt_edit(),
@@ -168,6 +278,13 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                 permissions::removeperm(),
                 permissions::listperms(),
                 utility::tags::tag(),
+                utility::papers::papers(),
+                utility::profile::setstatus(),
+                utility::profile::setavatar(),
+                utility::profile::setbanner(),
+                utility::profile::setactivity(),
+                tickets::close(),
+                tickets::force_close(),
                 tmdb::movie(),
                 tmdb::tv(),
             ],
@@ -180,7 +297,8 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                     match error {
                         poise::FrameworkError::Command { error, ctx, .. } => {
                             log::error!("Command error in '{}': {:?}", ctx.command().name, error);
-                            let error_msg = format!("❌ Error: {}\nDetails:\n```\n{:?}\n```", error, error);
+                            let error_msg =
+                                format!("❌ Error: {}\nDetails:\n```\n{:?}\n```", error, error);
                             let _ = ctx.say(error_msg).await;
 
                             // Log failed command to history
@@ -194,11 +312,14 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                                     poise::Context::Prefix(pctx) => pctx.msg.content.clone(),
                                     poise::Context::Application(actx) => {
                                         // For slash commands, reconstruct from command name and options
-                                        let mut invocation = format!("{}", &command_name);
+                                        let mut invocation = command_name.to_string();
                                         let options = &actx.interaction.data.options;
                                         if !options.is_empty() {
                                             for option in options {
-                                                invocation.push_str(&format!(" {}:{:?}", option.name, option.value));
+                                                invocation.push_str(&format!(
+                                                    " {}:{:?}",
+                                                    option.name, option.value
+                                                ));
                                             }
                                         }
                                         invocation
@@ -207,13 +328,19 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
 
                                 let (guild, channel) = match ctx {
                                     poise::Context::Prefix(pctx) => (
-                                        pctx.msg.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
-                                        pctx.msg.channel_id.to_string()
+                                        pctx.msg
+                                            .guild_id
+                                            .map(|g| g.to_string())
+                                            .unwrap_or_else(|| "DM".to_string()),
+                                        pctx.msg.channel_id.to_string(),
                                     ),
                                     poise::Context::Application(actx) => (
-                                        actx.interaction.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
-                                        actx.interaction.channel_id.to_string()
-                                    )
+                                        actx.interaction
+                                            .guild_id
+                                            .map(|g| g.to_string())
+                                            .unwrap_or_else(|| "DM".to_string()),
+                                        actx.interaction.channel_id.to_string(),
+                                    ),
                                 };
 
                                 let history_entry = serde_json::json!({
@@ -233,7 +360,10 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                                 if let Ok(tx) = db.begin_write() {
                                     {
                                         if let Ok(mut table) = tx.open_table(HISTORY) {
-                                            let _ = table.insert(key.as_str(), history_entry.to_string().as_str());
+                                            let _ = table.insert(
+                                                key.as_str(),
+                                                history_entry.to_string().as_str(),
+                                            );
                                         }
                                     }
                                     let _ = tx.commit();
@@ -250,7 +380,7 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                         other => {
                             log::error!("Framework error occurred");
                             poise::builtins::on_error(other).await.unwrap()
-                        },
+                        }
                     }
                 })
             },
@@ -262,7 +392,7 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                     // Log command execution to history
                     let db = match KV_DATABASE.get() {
                         Some(db) => db,
-                        None => return
+                        None => return,
                     };
 
                     let timestamp = chrono::Utc::now().to_rfc3339();
@@ -278,7 +408,8 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                             let options = &actx.interaction.data.options;
                             if !options.is_empty() {
                                 for option in options {
-                                    invocation.push_str(&format!(" {}:{:?}", option.name, option.value));
+                                    invocation
+                                        .push_str(&format!(" {}:{:?}", option.name, option.value));
                                 }
                             }
                             invocation
@@ -287,13 +418,19 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
 
                     let (guild, channel) = match ctx {
                         poise::Context::Prefix(pctx) => (
-                            pctx.msg.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
-                            pctx.msg.channel_id.to_string()
+                            pctx.msg
+                                .guild_id
+                                .map(|g| g.to_string())
+                                .unwrap_or_else(|| "DM".to_string()),
+                            pctx.msg.channel_id.to_string(),
                         ),
                         poise::Context::Application(actx) => (
-                            actx.interaction.guild_id.map(|g| g.to_string()).unwrap_or_else(|| "DM".to_string()),
-                            actx.interaction.channel_id.to_string()
-                        )
+                            actx.interaction
+                                .guild_id
+                                .map(|g| g.to_string())
+                                .unwrap_or_else(|| "DM".to_string()),
+                            actx.interaction.channel_id.to_string(),
+                        ),
                     };
 
                     let history_entry = serde_json::json!({
@@ -312,7 +449,8 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                     if let Ok(tx) = db.begin_write() {
                         {
                             if let Ok(mut table) = tx.open_table(HISTORY) {
-                                let _ = table.insert(key.as_str(), history_entry.to_string().as_str());
+                                let _ =
+                                    table.insert(key.as_str(), history_entry.to_string().as_str());
                             }
                         }
                         let _ = tx.commit();
@@ -326,7 +464,10 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
                 // Extract command metadata for web API
-                fn extract_commands(cmd: &poise::Command<crate::Data, Box<dyn std::error::Error + Send + Sync>>, parent_name: Option<&str>) -> Vec<serde_json::Value> {
+                fn extract_commands(
+                    cmd: &poise::Command<crate::Data, Box<dyn std::error::Error + Send + Sync>>,
+                    parent_name: Option<&str>,
+                ) -> Vec<serde_json::Value> {
                     let mut results = Vec::new();
 
                     // Skip parent command if it has subcommand_required
@@ -334,7 +475,9 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                     let subcommand_required = cmd.subcommand_required;
 
                     if !subcommand_required || !has_subcommands {
-                        let category = cmd.category.as_ref()
+                        let category = cmd
+                            .category
+                            .as_ref()
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| "Other".to_string());
 
@@ -346,13 +489,17 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                         };
 
                         let usage = if !cmd.parameters.is_empty() {
-                            let params: Vec<String> = cmd.parameters.iter().map(|p| {
-                                if p.required {
-                                    format!("<{}>", p.name)
-                                } else {
-                                    format!("[{}]", p.name)
-                                }
-                            }).collect();
+                            let params: Vec<String> = cmd
+                                .parameters
+                                .iter()
+                                .map(|p| {
+                                    if p.required {
+                                        format!("<{}>", p.name)
+                                    } else {
+                                        format!("[{}]", p.name)
+                                    }
+                                })
+                                .collect();
                             format!("/{} {}", full_command_path, params.join(" "))
                         } else {
                             format!("/{}", full_command_path)
@@ -366,14 +513,26 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
                         };
 
                         // Build full description with parameter details
-                        let mut full_description = cmd.description.as_deref().unwrap_or("No description available").to_string();
+                        let mut full_description = cmd
+                            .description
+                            .as_deref()
+                            .unwrap_or("No description available")
+                            .to_string();
 
                         if !cmd.parameters.is_empty() {
                             full_description.push_str("\n\n**Parameters:**");
                             for param in &cmd.parameters {
-                                let param_desc = param.description.as_deref().unwrap_or("No description");
-                                let required_marker = if param.required { "(required)" } else { "(optional)" };
-                                full_description.push_str(&format!("\n• `{}` {} - {}", param.name, required_marker, param_desc));
+                                let param_desc =
+                                    param.description.as_deref().unwrap_or("No description");
+                                let required_marker = if param.required {
+                                    "(required)"
+                                } else {
+                                    "(optional)"
+                                };
+                                full_description.push_str(&format!(
+                                    "\n• `{}` {} - {}",
+                                    param.name, required_marker, param_desc
+                                ));
                             }
                         }
 
@@ -419,8 +578,8 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
     let activity = serenity::ActivityData {
-        name: "you".to_string(),
-        kind: serenity::ActivityType::Watching,
+        name: "Always Watching You~".to_string(),
+        kind: serenity::ActivityType::Custom,
         state: None,
         url: None,
     };
@@ -432,10 +591,19 @@ async fn discordbot(subsys: &mut tokio_graceful_shutdown::SubsystemHandle) -> Re
         .await
         .expect("Error Creating Client");
 
+    // Store HTTP client for web API
+    DISCORD_HTTP.get_or_init(|| client.http.clone());
+
     // Start the stream checker background task
     let http_clone = client.http.clone();
     tokio::spawn(async move {
         streams::start_stream_checker(http_clone).await;
+    });
+
+    // Start the AYDY checker background task
+    let http_clone2 = client.http.clone();
+    tokio::spawn(async move {
+        random::deadge::start_aydy_checker(http_clone2).await;
     });
 
     log::info!("Starting Discord Client...");
@@ -482,13 +650,9 @@ async fn main() -> Result<()> {
     log::info!("Starting tokio startup...");
 
     // Setup and execute subsystem tree
-    Toplevel::new(async |s: &mut SubsystemHandle | {
-        s.start(SubsystemBuilder::new(
-            "DiscordBot", discordbot,
-        ));
-        s.start(SubsystemBuilder::new(
-            "WebServer", web::start_web_server,
-        ));
+    Toplevel::new(async |s: &mut SubsystemHandle| {
+        s.start(SubsystemBuilder::new("DiscordBot", discordbot));
+        s.start(SubsystemBuilder::new("WebServer", web::start_web_server));
     })
     .catch_signals()
     .handle_shutdown_requests(std::time::Duration::from_millis(1000))

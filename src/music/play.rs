@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::env::FOOTER_URL;
-use crate::{Context, Error, HTTP_CLIENT};
+use crate::{Context, Error, HTTP_CLIENT, colors};
 
 use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use songbird::input::{Compose, YoutubeDl};
@@ -58,7 +58,7 @@ impl VoiceEventHandler for TrackStartNotifier {
         let volume_up_id = format!("{}volup", ctx_id);
 
         if let EventContext::Track([(state, track)]) = ctx {
-            while state.playing != PlayMode::Play {
+            while track.get_info().await.unwrap().playing != PlayMode::Play {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
@@ -171,6 +171,7 @@ pub async fn join(ctx: Context<'_>) -> Result<(), Error> {
         let embed = serenity::CreateEmbed::new()
             .description("Joined")
             .footer(footer)
+            .color(colors::GREEN)
             .timestamp(serenity::model::Timestamp::now());
         poise::CreateReply::default().embed(embed)
     };
@@ -191,16 +192,20 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 
     let footer = serenity::CreateEmbedFooter::new(format!("Powered by {}", &*FOOTER_URL));
     let description: String;
+    let color: u32;
     if let Some(handler_lock) = manager.get(guild_id) {
         if let Err(e) = manager.remove(guild_id).await {
+            color = colors::ERROR;
             description = format!("Failed to leave {:?}", e)
         } else {
             let handler = handler_lock.lock().await;
             let queue = handler.queue();
             queue.stop();
+            color = colors::GREEN;
             description = "Left voice channel and cleared the queue".to_string()
         }
     } else {
+        color = colors::CRUST;
         description = "Not in a voice channel".to_string()
     }
 
@@ -208,6 +213,7 @@ pub async fn leave(ctx: Context<'_>) -> Result<(), Error> {
         let embed = serenity::CreateEmbed::new()
             .description(description)
             .footer(footer)
+            .color(color)
             .timestamp(serenity::model::Timestamp::now());
         poise::CreateReply::default().embed(embed)
     };
@@ -260,6 +266,7 @@ pub async fn queue(ctx: Context<'_>, url: String) -> Result<(), Error> {
             )
             .field("Duration", format!("{}:{}", minutes, seconds), true)
             .footer(footer)
+            .color(colors::PEACH)
             .timestamp(serenity::model::Timestamp::now());
 
         let played_embed = embed.clone().image(metadata.thumbnail.unwrap());
@@ -286,6 +293,7 @@ pub async fn queue(ctx: Context<'_>, url: String) -> Result<(), Error> {
             let embed = serenity::CreateEmbed::new()
                 .description("I'm not in a channel.")
                 .footer(footer)
+                .color(colors::CRUST)
                 .timestamp(serenity::model::Timestamp::now());
             poise::CreateReply::default().embed(embed)
         };

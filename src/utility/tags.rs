@@ -1,5 +1,5 @@
 use crate::env::FOOTER_URL;
-use crate::{Context, Error, KV_DATABASE, TABLE};
+use crate::{Context, Error, KV_DATABASE, TABLE, colors};
 
 use poise::serenity_prelude as serenity;
 use redb::{ReadableDatabase, ReadableTable};
@@ -31,6 +31,7 @@ pub async fn add(ctx: Context<'_>, key: String, value: String) -> Result<(), Err
             .title("Added Tag")
             .fields(vec![(key, value, true)])
             .footer(footer)
+            .color(colors::SUCCESS)
             .timestamp(serenity::model::Timestamp::now());
 
         poise::CreateReply::default().embed(embed)
@@ -56,6 +57,7 @@ pub async fn remove(ctx: Context<'_>, key: String) -> Result<(), Error> {
             .title("Removed Tag")
             .description(key)
             .footer(footer)
+            .color(colors::SUCCESS)
             .timestamp(serenity::model::Timestamp::now());
 
         poise::CreateReply::default().embed(embed)
@@ -85,6 +87,7 @@ pub async fn show(ctx: Context<'_>, key: String) -> Result<(), Error> {
             .title(key)
             .description(desc)
             .footer(footer)
+            .color(colors::PRIMARY)
             .timestamp(serenity::model::Timestamp::now());
 
         poise::CreateReply::default().embed(embed)
@@ -110,6 +113,7 @@ pub async fn showall(ctx: Context<'_>) -> Result<(), Error> {
             .title("")
             .description(description)
             .footer(footer)
+            .color(colors::PRIMARY)
             .timestamp(serenity::model::Timestamp::now());
 
         poise::CreateReply::default().embed(embed)

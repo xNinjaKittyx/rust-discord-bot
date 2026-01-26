@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::{Context, Error, HTTP_CLIENT};
 use poise::serenity_prelude as serenity;
 use serde::Deserialize;
@@ -22,7 +23,12 @@ struct TvResult {
     origin_country: Vec<String>,
 }
 
-#[poise::command(prefix_command, slash_command, aliases("shows", "show"), category = "Entertainment")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    aliases("shows", "show"),
+    category = "Entertainment"
+)]
 pub async fn tv(
     ctx: Context<'_>,
     #[description = "TV show title to search for"] query: String,
@@ -64,7 +70,7 @@ pub async fn tv(
     let mut embed = serenity::CreateEmbed::new()
         .title(&show.name)
         .url(format!("https://www.themoviedb.org/tv/{}", show.id))
-        .color(0x01b4e4);
+        .color(colors::ACCENT);
 
     if let Some(ref overview) = show.overview {
         embed = embed.description(overview);
@@ -89,8 +95,7 @@ pub async fn tv(
         embed = embed.field("Original Name", &show.original_name, false);
     }
 
-    ctx.send(poise::CreateReply::default().embed(embed))
-        .await?;
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
 
     Ok(())
 }

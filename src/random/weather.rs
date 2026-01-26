@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::env::OPENWEATHERMAP_API_KEY;
 use crate::{Context, Error, HTTP_CLIENT};
 
@@ -8,14 +9,10 @@ use serde::Deserialize;
 struct GeoLocation {
     lat: f64,
     lon: f64,
-    name: String,
-    #[serde(default)]
-    country: String,
 }
 
 #[derive(Deserialize, Debug)]
 struct WeatherCondition {
-    main: String,
     description: String,
 }
 
@@ -62,7 +59,10 @@ async fn get_location(query: &str) -> Result<GeoLocation, Error> {
         Ok(location)
     } else {
         let locations: Vec<GeoLocation> = response.json().await?;
-        locations.into_iter().next().ok_or("Location not found".into())
+        locations
+            .into_iter()
+            .next()
+            .ok_or("Location not found".into())
     }
 }
 
@@ -95,7 +95,9 @@ pub async fn weather(
     let weather_data = get_weather(geo.lat, geo.lon).await?;
 
     let unknown = "Unknown".to_string();
-    let condition = weather_data.weather.first()
+    let condition = weather_data
+        .weather
+        .first()
         .map(|w| &w.description)
         .unwrap_or(&unknown);
 
@@ -103,14 +105,22 @@ pub async fn weather(
         .title(format!("Weather for {}", weather_data.name))
         .description(condition)
         .field("Current", format!("{:.1}°F", weather_data.main.temp), true)
-        .field("Feels Like", format!("{:.1}°F", weather_data.main.feels_like), true)
+        .field(
+            "Feels Like",
+            format!("{:.1}°F", weather_data.main.feels_like),
+            true,
+        )
         .field("Condition", condition, true)
         .field("High", format!("{:.1}°F", weather_data.main.temp_max), true)
         .field("Low", format!("{:.1}°F", weather_data.main.temp_min), true)
         .field("\u{200b}", "\u{200b}", true)
         .field("Humidity", format!("{}%", weather_data.main.humidity), true)
-        .field("Pressure", format!("{} hPa", weather_data.main.pressure), true)
-        .color(0x5dadec)
+        .field(
+            "Pressure",
+            format!("{} hPa", weather_data.main.pressure),
+            true,
+        )
+        .color(colors::PRIMARY)
         .timestamp(serenity::model::Timestamp::now());
 
     let reply = poise::CreateReply::default().embed(embed);

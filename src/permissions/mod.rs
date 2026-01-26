@@ -42,16 +42,13 @@ struct UserPermissions {
 
 // Helper function to check if a user has permission
 pub async fn has_permission(user_id: u64, permission: Permission) -> Result<bool, Error> {
-    let db = KV_DATABASE.get().unwrap();
-    let tx = db.begin_read()?;
-    let table = tx.open_table(PERMISSIONS)?;
-
     let key = user_id.to_string();
-    if let Some(value) = table.get(key.as_str())? {
-        let perms: UserPermissions = serde_json::from_str(value.value())?;
-        Ok(perms.permissions.contains(&permission))
-    } else {
-        Ok(false)
+    match crate::db::read_entry(PERMISSIONS, &key)? {
+        Some(value) => {
+            let perms: UserPermissions = serde_json::from_str(&value)?;
+            Ok(perms.permissions.contains(&permission))
+        }
+        None => Ok(false),
     }
 }
 
@@ -75,7 +72,8 @@ pub async fn check_mod(ctx: Context<'_>) -> Result<bool, Error> {
     if user_id == *crate::env::AUTHOR_ID {
         return Ok(true);
     }
-    Ok(has_permission(user_id, Permission::Admin).await? || has_permission(user_id, Permission::Mod).await?)
+    Ok(has_permission(user_id, Permission::Admin).await?
+        || has_permission(user_id, Permission::Mod).await?)
 }
 
 // Check function for trusted permission
@@ -89,7 +87,12 @@ pub async fn check_trusted(ctx: Context<'_>) -> Result<bool, Error> {
         || has_permission(user_id, Permission::Trusted).await?)
 }
 
-#[poise::command(prefix_command, slash_command, check = "check_admin", category = "Permissions")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    check = "check_admin",
+    category = "Permissions"
+)]
 pub async fn addperm(
     ctx: Context<'_>,
     #[description = "User to grant permission"] user: serenity::User,
@@ -98,28 +101,22 @@ pub async fn addperm(
     let perm = match permission.parse::<Permission>() {
         Ok(p) => p,
         Err(_) => {
-            ctx.say("❌ Invalid permission level. Use: admin, mod, or trusted").await?;
+            ctx.say("❌ Invalid permission level. Use: admin, mod, or trusted")
+                .await?;
             return Ok(());
         }
     };
 
     let user_id = user.id.get();
-    let db = KV_DATABASE.get().unwrap();
+    let key = user_id.to_string();
 
     // Read current permissions
-    let mut perms = {
-        let tx = db.begin_read()?;
-        let table = tx.open_table(PERMISSIONS)?;
-        let key = user_id.to_string();
-
-        if let Some(value) = table.get(key.as_str())? {
-            serde_json::from_str::<UserPermissions>(value.value())?
-        } else {
-            UserPermissions {
-                user_id,
-                permissions: Vec::new(),
-            }
-        }
+    let mut perms = match crate::db::read_entry(PERMISSIONS, &key)? {
+        Some(value) => serde_json::from_str::<UserPermissions>(&value)?,
+        None => UserPermissions {
+            user_id,
+            permissions: Vec::new(),
+        },
     };
 
     // Add permission if not already present
@@ -127,18 +124,13 @@ pub async fn addperm(
         perms.permissions.push(perm.clone());
 
         // Write back to database
-        let tx = db.begin_write()?;
-        {
-            let mut table = tx.open_table(PERMISSIONS)?;
-            let key = user_id.to_string();
-            let value = serde_json::to_string(&perms)?;
-            table.insert(key.as_str(), value.as_str())?;
-        }
-        tx.commit()?;
+        let value = serde_json::to_string(&perms)?;
+        crate::db::write_entry(PERMISSIONS, &key, &value)?;
 
         ctx.say(format!(
             "✅ Granted **{}** permission to <@{}>",
-            perm.as_str(), user.id
+            perm.as_str(),
+            user.id
         ))
         .await?;
     } else {
@@ -153,7 +145,12 @@ pub async fn addperm(
     Ok(())
 }
 
-#[poise::command(prefix_command, slash_command, check = "check_admin", category = "Permissions")]
+#[poise::command(
+    prefix_command,
+    slash_command,
+    check = "check_admin",
+    category = "Permissions"
+)]
 pub async fn removeperm(
     ctx: Context<'_>,
     #[description = "User to revoke permission from"] user: serenity::User,
@@ -162,7 +159,8 @@ pub async fn removeperm(
     let perm = match permission.parse::<Permission>() {
         Ok(p) => p,
         Err(_) => {
-            ctx.say("❌ Invalid permission level. Use: admin, mod, or trusted").await?;
+            ctx.say("❌ Invalid permission level. Use: admin, mod, or trusted")
+                .await?;
             return Ok(());
         }
     };
@@ -199,7 +197,8 @@ pub async fn removeperm(
 
             ctx.say(format!(
                 "✅ Revoked **{}** permission from <@{}>",
-                perm.as_str(), user.id
+                perm.as_str(),
+                user.id
             ))
             .await?;
         } else {
@@ -220,17 +219,9 @@ pub async fn removeperm(
 
 #[poise::command(prefix_command, slash_command, category = "Permissions")]
 pub async fn listperms(ctx: Context<'_>) -> Result<(), Error> {
-    let db = KV_DATABASE.get().unwrap();
-    let tx = db.begin_read()?;
-    let table = tx.open_table(PERMISSIONS)?;
-
-    let mut all_perms: Vec<UserPermissions> = Vec::new();
-    for item in table.range::<&str>(..)? {
-        let (_, value) = item?;
-        if let Ok(perms) = serde_json::from_str::<UserPermissions>(value.value()) {
-            all_perms.push(perms);
-        }
-    }
+    let all_perms = crate::db::read_table(PERMISSIONS, |_, value| {
+        serde_json::from_str::<UserPermissions>(value).ok()
+    })?;
 
     if all_perms.is_empty() {
         ctx.say("No permissions have been assigned.").await?;
